@@ -1,0 +1,30 @@
+{
+  "app": {
+    "tagline": "AI-Powered Architectural Design"
+  },
+  "editor": {
+    "tools": {
+      "select": "Select",
+      "wall": "Draw Wall",
+      "room": "Draw Room",
+      "door": "Add Door",
+      "window": "Add Window",
+      "furniture": "Place Furniture"
+    },
+    "undo": "Undo",
+    "redo": "Redo",
+    "zoom_in": "Zoom In",
+    "zoom_out": "Zoom Out"
+  },
+  "chat": {
+    "placeholder": "Describe what you want to design...",
+    "send": "Send",
+    "listening": "Listening...",
+    "mic_unavailable": "Microphone not available"
+  },
+  "project": {
+    "untitled": "Untitled Project",
+    "save": "Save",
+    "export": "Export"
+  }
+}
