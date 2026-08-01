@@ -1,0 +1,287 @@
+/*
+ * ArchStudio design tokens.
+ *
+ * Two-layer architecture (copied from Onshape, which is why their dark mode landed cleanly across
+ * a 10-year-old app): PRIMITIVES are never referenced by components; only SEMANTIC aliases are.
+ * Switching theme rewrites only the semantic layer.
+ *
+ * Values derive from Autodesk's Weave design system (Apache-2.0, github.com/Autodesk/hig) —
+ * the only professionally-tuned CAD token set published in both polarities — cross-checked against
+ * Blender 4.x, Onshape and FreeCAD 1.0. High-density scale throughout: CAD UI is markedly denser
+ * than consumer web (11px labels, 24px rows, 2px radius). See DECISIONS.md D-010.
+ *
+ * Chrome is NEUTRAL charcoal (R=G=B). This is colour science, not taste: the eye white-balances
+ * against the field of view, so blue-tinted chrome makes the viewer misjudge wall and floor
+ * materials. The 3D viewport in particular is exactly neutral.
+ */
+
+:root {
+  /* ---- PRIMITIVES: neutral ramp (Weave charcoal + surface.darkGray) ---- */
+  --p-white: #ffffff;
+  --p-black: #000000;
+  --p-gray-100: #eeeeee;
+  --p-gray-200: #dcdcdc;
+  --p-gray-300: #cccccc;
+  --p-gray-400: #bbbbbb;
+  --p-gray-500: #999999;
+  --p-gray-600: #808080;
+  --p-gray-700: #666666;
+  --p-gray-800: #4d4d4d;
+  --p-gray-900: #3c3c3c;
+
+  --p-dark-100: #535353;
+  --p-dark-200: #474747;
+  --p-dark-250: #373737;
+  --p-dark-300: #2a2a2a;
+  --p-dark-350: #202020;
+
+  --p-light-100: #ffffff;
+  --p-light-200: #f5f5f5;
+  --p-light-250: #eeeeee;
+  --p-light-300: #d9d9d9;
+  --p-light-350: #cccccc;
+
+  /* ---- PRIMITIVES: accent + status (Weave autodeskBlue / semantics) ---- */
+  --p-accent-300: #6ac0e7;
+  --p-accent-400: #38abdf;
+  --p-accent-500: #0696d7;
+  --p-accent-700: #006eaf;
+
+  --p-error: #dd2222;
+  --p-error-dark: #eb5555;
+  --p-success: #6a9728;
+  --p-success-dark: #87b340;
+  --p-warning: #faa21b;
+  --p-warning-dark: #fbb549;
+
+  /* ---- PRIMITIVES: canvas + model semantics (theme-independent) ----
+   * Selection is ORANGE in the canvas and BLUE in panels — two deliberately non-competing
+   * visual languages, as Onshape and every DCC tool do. Orange survives on any material and
+   * never reads as "UI chrome". */
+  --p-select: #ff8000;
+  --p-select-active: #ffa028;
+  --p-prehighlight: #ffc685;
+
+  /* Axis colours bind to the SCENE's semantic axes (plan X / plan Y / vertical),
+   * not the renderer's internal basis — otherwise the gizmo contradicts the readout. */
+  --p-axis-x: #ff3352;
+  --p-axis-y: #8bdc00;
+  --p-axis-z: #2890ff;
+  /* "Aligned to other geometry", per the SketchUp inference convention. */
+  --p-inference: #d946ef;
+
+  /* ---- SPACING (Weave high density) ---- */
+  --sp-2: 2px;
+  --sp-4: 4px;
+  --sp-8: 8px;
+  --sp-12: 12px;
+  --sp-16: 16px;
+  --sp-24: 24px;
+  --sp-32: 32px;
+
+  /* ---- SIZING ---- */
+  --h-topbar: 40px;
+  --h-ribbon: 36px;
+  --h-statusbar: 24px;
+  --h-row: 24px;
+  --h-tree-row: 22px;
+  --h-control: 24px;
+  --h-button: 28px;
+  --h-button-lg: 32px;
+  --w-left-panel: 240px;
+  --w-right-panel: 280px;
+  --w-label-col: 96px;
+  --w-icon-rail: 36px;
+
+  /* ---- RADIUS + BORDER (Weave: large radius is 4px; ≥8px reads as marketing site) ---- */
+  --r-none: 0;
+  --r-sm: 2px;
+  --r-md: 4px;
+  --r-lg: 6px;
+  --bw: 1px;
+
+  /* ---- TYPOGRAPHY ---- */
+  --font-ui: Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --font-mono: 'Roboto Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+  --fs-label: 11px;
+  --fs-body: 12px;
+  --fs-heading: 13px;
+  --fs-title: 16px;
+  --fw-regular: 450;
+  --fw-medium: 550;
+  --fw-bold: 650;
+  --lh-tight: 1.3;
+  --lh-body: 1.35;
+
+  /* ---- MOTION (nothing in a CAD tool should animate longer than 250ms) ---- */
+  --t-quick: 100ms;
+  --t-regular: 200ms;
+
+  /* ---- Z-SCALE ---- */
+  --z-canvas: 1;
+  --z-overlay: 100;
+  --z-panel: 200;
+  --z-dropdown: 2000;
+  --z-modal: 8000;
+  --z-toast: 9000;
+}
+
+/* =========================================================================
+ * DARK THEME (default)
+ * ====================================================================== */
+
+:root,
+:root[data-theme='dark'] {
+  color-scheme: dark;
+
+  --surface-100: var(--p-dark-100);
+  --surface-200: var(--p-dark-200);
+  --surface-250: var(--p-dark-250);
+  --surface-300: var(--p-dark-300);
+  --surface-350: var(--p-dark-350);
+
+  --bg-app: var(--p-dark-300);
+  --bg-panel: var(--p-dark-250);
+  --bg-input: var(--p-dark-350);
+  --bg-elevated: #1e1e1e;
+
+  --text-default: #f5f5f5;
+  --text-dim: rgba(245, 245, 245, 0.7);
+  --text-placeholder: rgba(245, 245, 245, 0.4);
+  --text-accent: var(--p-accent-400);
+
+  --icon-default: var(--p-gray-500);
+  --icon-hover: #dcdcdc;
+
+  --border-base: rgba(255, 255, 255, 0.14);
+  --border-strong: rgba(255, 255, 255, 0.24);
+  --divider: rgba(255, 255, 255, 0.1);
+  --border-accent: var(--p-accent-400);
+
+  /* Hover/press are alpha overlays, not separate hexes — one system survives theme switching. */
+  --overlay-hover: rgba(255, 255, 255, 0.07);
+  --overlay-pressed: rgba(255, 255, 255, 0.12);
+  --bg-selected: rgba(56, 171, 223, 0.25);
+  --halo-focus: rgba(56, 171, 223, 0.35);
+
+  --status-error: var(--p-error-dark);
+  --status-success: var(--p-success-dark);
+  --status-warning: var(--p-warning-dark);
+
+  --shadow-low: 0 0 4px rgba(0, 0, 0, 0.4);
+  --shadow-high: 0 0 16px rgba(0, 0, 0, 0.5);
+
+  /* CANVAS — independent of chrome theme (the Vectorworks model).
+   * #3B3B3B is the dead centre of the verified cluster: Blender #3D3D3D, FreeCAD #3B3B3B,
+   * Onshape dark #333333, Unity #474747. Flat, never a gradient. */
+  --canvas-3d: #3b3b3b;
+  --canvas-plan: #e4e4e4;
+  /* Ground plane sits ~6 RGB units off the background: enough to read as a floor, not enough
+     to compete with model surfaces. */
+  --ground-3d: #414141;
+  --ground-plan: #eeeeee;
+  /* Grid lines belong ~12–35 RGB units from the background. Below that they vanish once the
+     shader fades them with distance; above that the grid shouts. */
+  --grid-minor: rgba(255, 255, 255, 0.12);
+  --grid-major: rgba(255, 255, 255, 0.26);
+  --grid-minor-plan: #c9c9c9;
+  --grid-major-plan: #a8a8a8;
+  --plan-ink: #1c1c1c;
+}
+
+/* =========================================================================
+ * LIGHT THEME
+ * ====================================================================== */
+
+:root[data-theme='light'] {
+  color-scheme: light;
+
+  --surface-100: var(--p-light-100);
+  --surface-200: var(--p-light-200);
+  --surface-250: var(--p-light-250);
+  --surface-300: var(--p-light-300);
+  --surface-350: var(--p-light-350);
+
+  --bg-app: var(--p-light-250);
+  --bg-panel: var(--p-light-200);
+  --bg-input: var(--p-light-100);
+  --bg-elevated: var(--p-light-100);
+
+  --text-default: var(--p-gray-900);
+  --text-dim: rgba(60, 60, 60, 0.7);
+  --text-placeholder: rgba(60, 60, 60, 0.4);
+  --text-accent: var(--p-accent-500);
+
+  --icon-default: var(--p-gray-600);
+  --icon-hover: var(--p-gray-900);
+
+  --border-base: rgba(60, 60, 60, 0.2);
+  --border-strong: rgba(60, 60, 60, 0.35);
+  --divider: rgba(60, 60, 60, 0.12);
+  --border-accent: var(--p-accent-500);
+
+  --overlay-hover: rgba(128, 128, 128, 0.1);
+  --overlay-pressed: rgba(128, 128, 128, 0.2);
+  --bg-selected: rgba(6, 150, 215, 0.15);
+  --halo-focus: rgba(6, 150, 215, 0.35);
+
+  --status-error: var(--p-error);
+  --status-success: var(--p-success);
+  --status-warning: var(--p-warning);
+
+  --shadow-low: 0 0 4px rgba(0, 0, 0, 0.15);
+  --shadow-high: 0 0 16px rgba(0, 0, 0, 0.2);
+
+  --canvas-3d: #d6d6d6;
+  --canvas-plan: #ffffff;
+  --ground-3d: #cfcfcf;
+  --ground-plan: #ffffff;
+  --grid-minor: rgba(0, 0, 0, 0.14);
+  --grid-major: rgba(0, 0, 0, 0.28);
+  --grid-minor-plan: #dcdcdc;
+  --grid-major-plan: #bcbcbc;
+  --plan-ink: #1c1c1c;
+}
+
+/* Follow the OS when the user hasn't chosen — the Vectorworks model. */
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme]) {
+    color-scheme: light;
+    --surface-100: var(--p-light-100);
+    --surface-200: var(--p-light-200);
+    --surface-250: var(--p-light-250);
+    --surface-300: var(--p-light-300);
+    --surface-350: var(--p-light-350);
+    --bg-app: var(--p-light-250);
+    --bg-panel: var(--p-light-200);
+    --bg-input: var(--p-light-100);
+    --bg-elevated: var(--p-light-100);
+    --text-default: var(--p-gray-900);
+    --text-dim: rgba(60, 60, 60, 0.7);
+    --text-placeholder: rgba(60, 60, 60, 0.4);
+    --text-accent: var(--p-accent-500);
+    --icon-default: var(--p-gray-600);
+    --icon-hover: var(--p-gray-900);
+    --border-base: rgba(60, 60, 60, 0.2);
+    --border-strong: rgba(60, 60, 60, 0.35);
+    --divider: rgba(60, 60, 60, 0.12);
+    --border-accent: var(--p-accent-500);
+    --overlay-hover: rgba(128, 128, 128, 0.1);
+    --overlay-pressed: rgba(128, 128, 128, 0.2);
+    --bg-selected: rgba(6, 150, 215, 0.15);
+    --halo-focus: rgba(6, 150, 215, 0.35);
+    --status-error: var(--p-error);
+    --status-success: var(--p-success);
+    --status-warning: var(--p-warning);
+    --shadow-low: 0 0 4px rgba(0, 0, 0, 0.15);
+    --shadow-high: 0 0 16px rgba(0, 0, 0, 0.2);
+    --canvas-3d: #d6d6d6;
+    --canvas-plan: #ffffff;
+    --ground-3d: #cfcfcf;
+    --ground-plan: #ffffff;
+    --grid-minor: rgba(0, 0, 0, 0.14);
+    --grid-major: rgba(0, 0, 0, 0.28);
+    --grid-minor-plan: #dcdcdc;
+    --grid-major-plan: #bcbcbc;
+  }
+}
