@@ -17,14 +17,25 @@
 |------|----------|----------|----------|
 | 1B-i core (A1/A2/A5, D1/D3/D4, E3/E4) | 8 / 8 done | 1 / 4 | — |
 | 1B-i documentation & annotation (C1–C3, A4) | 4 / 4 done | — | — |
-| 1B-ii (elements + perf + parity) | 1 / 8 done | 0 / 8 | — |
+| 1B-ii (elements + perf + parity) | 3 / 8 done | 0 / 8 | — |
 | Deferred to later phases | — | — | 12 |
 
-**Overall P1 count: 13 / 20 done. The entire 1B-i gate (12/12 P1 items) is complete; B6 is the**
-**first 1B-ii item landed. Remaining: B1/B2/B3/B7, D2, E1, E5.**
+**Overall P1 count: 16 / 20 done. The entire 1B-i gate (12/12 P1 items) is complete; B6, D2/B7 and**
+**E5 are the 1B-ii items landed. Remaining: B1 (wall voiding), B2, B3, E1.**
 
-**Quality gates as of the last update:** 593 frontend tests, 13 backend tests, TypeScript strict
-clean, ESLint clean (`--max-warnings 0`), `vite build` succeeds.
+**Quality gates as of the last update:** 746 frontend tests, **78 backend tests**, TypeScript strict
+clean, ESLint clean (`--max-warnings 0`), `vite build` succeeds (main chunk 1.31 MB / 368 KB gzip,
+plus a **74 KB lazily-loaded CSG chunk** that only loads for scenes containing a boolean). Backend:
+ruff clean, `mypy --strict` clean, `shared/python/models.py` at 100% coverage — all three now cover
+`shared/python`, which was previously in no CI gate at all.
+
+**Outstanding on B7:** the live in-browser visual confirmation was NOT completed this session — the
+Browser pane was not displayed, so no frame could be composited and no screenshot taken. Driving the
+canvas with synthetic `PointerEvent`s was tried and rejected as a substitute: it fails to commit for
+the pre-existing `column` tool too, so it verifies nothing about this change. What IS verified is
+that the app loads clean (no console errors), the tool appears in the ribbon with all seven shapes
+in its type selector, the status-bar hint is correct, and the exact geometry functions the renderer
+calls are volume-tested. **The pixels themselves remain unconfirmed.**
 
 **Correction to an earlier note in this file:** the preview pane's screenshot capability came back
 later in the session, and visual testing while building the column grid renderer caught a real bug
@@ -57,13 +68,13 @@ rendering at the correct size in the live 3D/plan viewport.
 
 | # | Element | P | Status | Notes |
 |---|---------|---|--------|-------|
-| B1 | Roof | P1 | ⬜ | Closed footprint + per-edge `{angle, run, thickness, overhang}`. Must void the walls it meets. |
+| B1 | Roof | P1 | 🔨 | **The roof element itself is done** (this row was left stale when it landed): schema v5 `Roof`/`RoofEdge` + `RoofTypeDef`, `shared/geometry/roof.ts`, `viewport/Roofs.tsx`, the `roof` tool (`U`), and a Properties panel — scoped to rectangular footprints with one uniform slope angle, refusing anything else rather than approximating it (**D-018**). Export path added with B7 (it was missing). **Outstanding: voiding the walls a roof meets.** Per D-018 that needs a wall's TOP to be a sloped plane rather than a flat height, which `wallSolidBoxes` (D-005) does not model — cutting a wall to a roof plane makes it a wedge, a genuinely different box-decomposition case that must be done once for every wall, not bolted on as a roof special case. Also still open: the general (non-rectangular / per-edge-angle) straight-skeleton solver, which D-018 established is additive — only the validation gate in `roof.ts` loosens, no migration. |
 | B2 | Stairs | P1 | ⬜ | `desiredNumberOfRisers` → derived `actualRiserHeight`; Blondel comfort ratio as validation feedback. |
 | B3 | Railing | P1 | ⬜ | |
 | B4 | Curtain wall | P2 | ⬜ | Panels sized *by* the grid, never directly. |
 | B5 | Ceiling | P2 | ⬜ | |
 | B6 | Column grid (axes) | P1 | ✅ | Schema v4 adds `ColumnGrid`/`GridAxis` (per-axis spacing, so non-uniform bays and radial-ready data model) + `columnGrids[]`, with a tested v3→v4 migration. `shared/geometry/columnGrid.ts` resolves axis positions, grid lines (with extension + bubble points at both ends), and intersections (for future column snapping). `viewport/ColumnGrids.tsx` renders dashed lines + numbered/lettered bubbles. One-click `columngrid` tool (`Y`) drops a sane default (4 numbered × 3 lettered axes, 5m bays); axis count/spacing/labels are edited in Properties (add/remove/rename), the same numeric-first pattern as the rest of the app. `+19` geometry tests, `+2` gesture tests. **Visually confirmed in the browser** — see the note below. |
-| B7 | Primitive solids + booleans | P1 | ⬜ | Blocked on the D2 decision. |
+| B7 | Primitive solids + booleans | P1 | ✅ | Schema v6 adds `PrimitiveTypeDef`/`Primitive` (box, cylinder, cone, sphere, prism, wedge, torus) and `BooleanNode` (`union`/`cut`/`intersect` over operand ids, which may be other nodes — a real tree), with a tested v5→v6 migration that back-fills the default primitive types so pre-v6 projects can use the tool. `shared/geometry/primitives.ts` tessellates each shape to a watertight indexed mesh in pure TS (no Three) plus closed-form volume/bounds; `shared/geometry/booleanTree.ts` resolves/validates the tree (cycles, dangling operands, arity) with no CSG. `frontend/src/geometry/evaluateBoolean.ts` is the single Three seam, lazy-loading `three-bvh-csg@0.0.17` and shared by the viewport AND the exporter. `primitive` tool (`V`), Union/Cut/Intersect + Explode in the Modify panel (verbs, not a tool — they act on an existing selection). `+68` primitive tests, `+38` boolean tests, `+9` gesture tests, `+8` migration tests. See D-019. |
 | B8 | Slab openings (inner loops) and shafts | P2 | ⬜ | `Opening.hostId` already generalises the void. |
 | B9 | Wall sweeps / reveals | P3 | ⏭️ | Decorative profiles; no architectural capability depends on them. |
 | B10 | Site / terrain (toposolid) | P3 | ⏭️ | Large subsystem (cut/fill volumes); nothing in Phase 1 needs it. |
@@ -88,7 +99,7 @@ rendering at the correct size in the live 3D/plan viewport.
 | # | Item | P | Status | Notes |
 |---|------|---|--------|-------|
 | D1 | Direct parametric handles | P1 | ✅ | `editor/handles.ts` (pure) + `viewport/Handles.tsx` (r3f shell). Wall endpoints, wall bulge, wall face → thickness, wall top → push/pull, column top → push/pull, slab vertices. One undo entry per drag; plane-space drags snap through the same `resolvePointer` as drawing. Glyph encodes the verb (cube = move point, sphere = bow curve, plate = push face, cone = push/pull). A **level-bound** top stays level-bound when pushed — only its offset changes — so multi-storey tracking survives (D-009). Thickness is a TYPE property, so that handle is magenta and flagged `editsType`: it changes every instance, which is the defining BIM interaction (rule 4), never a surprise. |
-| D2 | Boolean geometry decision | P1 | ⬜ | Must be settled before B7. Box decomposition (D-005) stays for rectangular openings either way. |
+| D2 | Boolean geometry decision | P1 | ✅ | **D-019.** The boolean TREE is stored parametrically and the evaluated mesh never is; primitives tessellate in pure TS; evaluation uses `three-bvh-csg` pinned at **0.0.17** (0.0.18 needs `three >= 0.179`, this repo is on 0.167), lazy-loaded via dynamic `import()` so a scene with no boolean pays nothing (E2). Verified before writing code: cube booleans give volume 7.000000 / 1.000000 / 8.000000 exactly, CPU-only, so boolean correctness is unit-testable. Box decomposition (D-005) is unchanged for rectangular openings — the two coexist deliberately. Exact BRep booleans stay deferred to the Phase 6 OpenCascade path. |
 | D3 | Trim / extend / split / offset / align | P1 | ✅ | `shared/geometry/modify.ts` (line math) + `editor/modifyVerbs.ts` (scene verbs) + four ribbon tools (`T` `E` `K` `O`) and align buttons in the Modify panel. Trim uses **"click the side you keep"**; trim/extend are two-pick (boundary, then target). **Split** hands each opening to the piece containing it and rebases its offset, and refuses when an opening straddles the cut. **Extend** from the start slides openings so they stay put in space. Offset takes its sign from which side you click, and offsets arcs by changing radius (bulge unchanged). Trim/extend refuse on arcs rather than picking one of two intersections arbitrarily — stated, not hidden. |
 | D4 | Copy / array (linear + radial) / mirror / rotate | P1 | ✅ | `shared/geometry/transform.ts` (one affine type) + `editor/transforms.ts` (verbs) + `ui/ModifyPanel.tsx` (numeric-first UI that works on a multi-selection). A mirrored arc's bulge **negates** (it encodes a signed sweep); a rotated column's own `rotation` scalar follows. Copying a wall brings its openings AND their fillings — the mirror of `deleteElement`'s cascade. A full 360° ring divides by the item count so the last copy does not land on the original. |
 | D5 | Groups | P2 | ⬜ | |
@@ -103,10 +114,10 @@ rendering at the correct size in the live 3D/plan viewport.
 | # | Item | P | Status | Notes |
 |---|------|---|--------|-------|
 | E1 | 60 fps performance target unverified | P1 | ⬜ | Needs a generated stress scene (3 storeys, 60+ walls, 40 furniture) and a frame-time measurement before any optimisation. |
-| E2 | Bundle size (1.23 MB / 347 KB gzip) | P2 | ⬜ | Over Vite's 500 KB warning; Three.js dominates. A `manualChunks` pass. |
+| E2 | Bundle size (1.31 MB / 368 KB gzip) | P2 | ⬜ | Over Vite's 500 KB warning; Three.js dominates. A `manualChunks` pass. The CSG dependency added in B7 is already split into its own 74 KB chunk that only loads for scenes containing a boolean (D-019), so it does not contribute to the main bundle. |
 | E3 | Browser-capability hardening | P1 | ✅ | `viewport/capability.ts` probes WebGL and the extensions the viewport needs, with a clear message instead of a blank canvas; `ViewportBoundary` catches render failures. Troika removed (D-015). |
 | E4 | Integration/interaction tests | P1 | ✅ | `pointer.test.ts` + `gestures.test.ts` drive whole gestures through the same decision tree `Interaction.tsx` uses. Extended this session with the arc-wall gesture and the handle drags. |
-| E5 | Backend/Python parity | P1 | ⬜ | `shared/python/models.py` is still schema **v1** — no types, levels, fillings, slabs, columns or beams. Phase 3's agent tools validate against it. |
+| E5 | Backend/Python parity | P1 | ✅ | `shared/python/models.py` rewritten v1 → **v6** (~105 → ~860 lines), mirroring `scene.ts` section for section: the 9-category `ElementTypeDef` union, all 22 collections, and the four other discriminated unions (`TopConstraint`, `Baseline`, `ProfileShape`, 7-variant `PrimitiveShape`). **Migration is deliberately NOT duplicated** — it stays TS-only and `parse_scene()` refuses any other version with "Migrate it client-side before sending", so there is one implementation of that logic, not two. Fixed a live drift bug: `Units` was missing `"mm"`. Golden fixtures in `shared/fixtures/` lock the two languages together (see below). `shared/python` is now a real package, covered by ruff + `mypy --strict` + coverage in CI — it was in **no** gate at all before. Backend tests **13 → 78**, `models.py` at **100%** coverage. |
 | E6 | Accessibility audit | P2 | ⬜ | aria-label/aria-pressed partially present but unaudited. |
 | E7 | Undo-history memory | P3 | ⏭️ | Full snapshots at 100 entries; fine at current scene sizes (noted in D-006). |
 | E8 | i18n — only `en` ships | P3 | ⏭️ | Strings are extracted; additional locales are explicitly Phase 7. |
@@ -118,6 +129,37 @@ rendering at the correct size in the live 3D/plan viewport.
 
 Newest first. One line per landed item.
 
+- **E5** — Python/backend parity. `shared/python/models.py` rewritten v1 → v6; migration stays
+  TS-only by design, with `parse_scene()` refusing other versions instead of duplicating five
+  migrations in a second language. `shared/python` became a real package and entered CI (ruff,
+  `mypy --strict`, coverage) for the first time. Backend tests 13 → 78, `models.py` 100% covered.
+  **The durable part is the lock, not the port:** golden fixtures in `shared/fixtures/` are emitted
+  by the TS suite and parsed by the Python suite, with `extra="forbid"` on `SceneGraph`. Both
+  directions were verified by deliberately breaking them — bumping `SCHEMA_VERSION` to 7 failed the
+  TS suite, and adding a TS-only collection then regenerating failed the Python suite with
+  `Extra inputs are not permitted`. Fixed on the way: `Units` was missing `"mm"`; the backend
+  Dockerfile never copied `shared/` so a runtime import would fail in a real image (compose hid this
+  with a volume mounted at a *different* path); and `AGENTS.md` still presented the v1 schema as
+  authoritative, which is how the next agent would have re-drifted.
+  **Unverified:** the Docker/compose change could not be built — Docker is not installed in this
+  environment. The package layout it relies on WAS verified (importing `shared.python.models` from
+  an unrelated cwd with `PYTHONPATH` set to the repo root, as the image does); only the `COPY` steps
+  and the compose context change are untested. Run `docker compose build backend` before relying on
+  a built image.
+- **D2 / B7** — the boolean-geometry decision (D-019) and primitive solids + booleans. Schema v6
+  (`primitives[]`, `booleans[]`), pure tessellation + tree resolution in `shared/geometry/`, one
+  lazy-loaded `three-bvh-csg` seam shared by the viewport and the exporter, `primitive` tool (`V`),
+  and Union/Cut/Intersect/Explode as Modify-panel verbs. `+123` tests (741 total).
+  Three real bugs the tests caught, all of which would have silently corrupted booleans rather than
+  looked wrong: every primitive was built **inside-out** (negative volume — an inverted operand makes
+  a subtraction keep exactly the material it should remove), the cylinder/cone/prism **end caps wound
+  the same way as their side faces** so those three shapes were not watertight, and the torus grid was
+  reversed. The watertightness and signed-volume assertions exist precisely because none of these
+  three is visible in a render.
+  Also fixed while here, both pre-existing: `buildSceneGroup` never emitted **roofs** (the viewport
+  drew a roof no export contained — a one-geometry-rule violation), and the model tree omitted roofs
+  and column grids, so B1/B6 elements could be drawn but never selected from the tree. The ribbon's
+  type selector also had no `roof` case, so the roof type dropdown ignored the active selection.
 - **B6** — column grids: schema v4, geometry (axis positions/lines/intersections), renderer,
   `columngrid` tool with Properties-panel axis editing. `+19` geometry tests, `+2` gesture tests.
   Caught and fixed a real bug while visually verifying: `distanceFactor` on the `Html` labels in

@@ -1,0 +1,479 @@
+/**
+ * Golden scene-graph fixtures — the mechanical lock against TS/Python schema drift (E5).
+ *
+ * `shared/python/models.py` sat FIVE schema versions behind `shared/types/scene.ts` because
+ * nothing tied the two together. These fixtures do:
+ *
+ *  - This file asserts TypeScript still produces exactly the checked-in JSON.
+ *  - `backend/tests/test_scene_models.py` asserts Pydantic still parses that same JSON, with
+ *    `extra="forbid"` so a collection added here but not there fails loudly.
+ *
+ * So bumping the schema fails THIS suite until the fixture is regenerated, and regenerating it
+ * fails the PYTHON suite until the models follow. Neither side can move alone.
+ *
+ * **To regenerate after an intentional schema change:** `npx vitest run fixtures -u`
+ *
+ * The populated fixture is deliberately exhaustive — every collection non-empty, every type
+ * category, every primitive kind, and both variants of each discriminated union — because the
+ * fixtures can only catch drift in the shapes they actually contain.
+ */
+import { describe, it, expect } from 'vitest'
+import {
+  SCHEMA_VERSION,
+  emptySceneGraph,
+  PRIMITIVE_KINDS,
+  type SceneGraph,
+} from '../../../shared/types/scene'
+
+/** Stable, hand-authored document exercising every part of the schema. No random ids. */
+function populatedSceneGraph(): SceneGraph {
+  const base = emptySceneGraph('fixture-project')
+
+  return {
+    ...base,
+    units: 'm',
+    // Every type category, plus one primitive type per shape kind.
+    types: [
+      {
+        id: 'wt-1',
+        category: 'wall',
+        name: 'Exterior — 200mm',
+        function: 'exterior',
+        layers: [
+          { material: 'mat-plaster-white', thickness: 0.015, function: 'finish' },
+          { material: 'mat-brick', thickness: 0.17, function: 'structure' },
+          { material: 'mat-plaster-white', thickness: 0.015, function: 'finish' },
+        ],
+      },
+      {
+        id: 'dt-1',
+        category: 'door',
+        name: 'Single door',
+        width: 0.9,
+        height: 2.1,
+        thickness: 0.045,
+        operation: 'single-swing',
+        frameMaterial: 'mat-timber',
+        panelMaterial: 'mat-timber',
+      },
+      {
+        id: 'wnt-1',
+        category: 'window',
+        name: 'Window',
+        width: 1.2,
+        height: 1.2,
+        defaultSillHeight: 0.9,
+        frameThickness: 0.06,
+        partitioning: 'double-vertical',
+        frameMaterial: 'mat-timber',
+        glassMaterial: 'mat-glass',
+      },
+      {
+        id: 'st-1',
+        category: 'slab',
+        name: 'Floor slab',
+        function: 'floor',
+        layers: [{ material: 'mat-concrete', thickness: 0.2, function: 'structure' }],
+      },
+      // Both ProfileShape variants: rectangular on the column, circular on the beam.
+      {
+        id: 'ct-1',
+        category: 'column',
+        name: 'Column 300×300',
+        profile: { kind: 'rectangular', width: 0.3, depth: 0.3 },
+        material: 'mat-concrete',
+      },
+      {
+        id: 'bt-1',
+        category: 'beam',
+        name: 'Beam ⌀400',
+        profile: { kind: 'circular', diameter: 0.4 },
+        material: 'mat-steel',
+      },
+      {
+        id: 'ft-1',
+        category: 'furniture',
+        name: 'Sofa',
+        catalogId: 'sofa-01',
+        footprint: [2, 0.9],
+        heightMeters: 0.8,
+        material: 'mat-timber',
+      },
+      {
+        id: 'rt-1',
+        category: 'roof',
+        name: 'Tiled roof',
+        layers: [{ material: 'mat-tile', thickness: 0.25, function: 'finish' }],
+      },
+      {
+        id: 'pt-box',
+        category: 'primitive',
+        name: 'Box',
+        shape: { kind: 'box', width: 1, depth: 1, height: 1 },
+        material: 'mat-concrete',
+      },
+      {
+        id: 'pt-cylinder',
+        category: 'primitive',
+        name: 'Cylinder',
+        shape: { kind: 'cylinder', radius: 0.5, height: 1, segments: 32 },
+        material: 'mat-concrete',
+      },
+      {
+        id: 'pt-cone',
+        category: 'primitive',
+        name: 'Cone',
+        shape: { kind: 'cone', radius: 0.5, height: 1, segments: 32 },
+        material: 'mat-concrete',
+      },
+      {
+        id: 'pt-sphere',
+        category: 'primitive',
+        name: 'Sphere',
+        shape: { kind: 'sphere', radius: 0.5, segments: 24 },
+        material: 'mat-concrete',
+      },
+      {
+        id: 'pt-prism',
+        category: 'primitive',
+        name: 'Prism',
+        shape: { kind: 'prism', radius: 0.5, height: 1, sides: 6 },
+        material: 'mat-concrete',
+      },
+      {
+        id: 'pt-wedge',
+        category: 'primitive',
+        name: 'Wedge',
+        shape: { kind: 'wedge', width: 1, depth: 1, height: 1 },
+        material: 'mat-concrete',
+      },
+      {
+        id: 'pt-torus',
+        category: 'primitive',
+        name: 'Torus',
+        shape: {
+          kind: 'torus',
+          radius: 0.5,
+          tubeRadius: 0.2,
+          radialSegments: 16,
+          tubularSegments: 32,
+        },
+        material: 'mat-steel',
+      },
+    ],
+    levels: [
+      {
+        id: 'lv1',
+        name: 'Ground floor',
+        elevation: 0,
+        height: 3,
+        isBuildingStory: true,
+        computationHeight: 0,
+      },
+      {
+        id: 'lv2',
+        name: 'First floor',
+        elevation: 3,
+        height: 3,
+        isBuildingStory: true,
+        computationHeight: 0,
+      },
+    ],
+    // Both Baseline variants and both TopConstraint variants.
+    walls: [
+      {
+        id: 'w1',
+        typeId: 'wt-1',
+        levelId: 'lv1',
+        baseline: { kind: 'line', start: [0, 0], end: [6, 0] },
+        baseOffset: 0,
+        top: { kind: 'level', levelId: 'lv2', offset: -0.2 },
+        locationLine: 'centerline',
+        flipped: false,
+        roomBounding: true,
+      },
+      {
+        id: 'w2',
+        typeId: 'wt-1',
+        levelId: 'lv1',
+        baseline: { kind: 'arc', start: [6, 0], end: [6, 4], bulge: -0.4 },
+        baseOffset: 0,
+        top: { kind: 'unconnected', height: 2.8 },
+        locationLine: 'finish-exterior',
+        flipped: true,
+        roomBounding: true,
+      },
+    ],
+    openings: [
+      {
+        id: 'o1',
+        hostId: 'w1',
+        offset: 1,
+        width: 0.9,
+        height: 2.1,
+        sillHeight: 0,
+        predefinedType: 'opening',
+        depth: null,
+      },
+      {
+        id: 'o2',
+        hostId: 'w1',
+        offset: 3,
+        width: 1.2,
+        height: 1.2,
+        sillHeight: 0.9,
+        predefinedType: 'recess',
+        depth: 0.05,
+      },
+    ],
+    fillings: [
+      { id: 'f1', openingId: 'o1', typeId: 'dt-1', flippedHand: false, flippedFacing: false },
+      { id: 'f2', openingId: 'o2', typeId: 'wnt-1', flippedHand: true, flippedFacing: true },
+    ],
+    slabs: [
+      {
+        id: 'sl1',
+        typeId: 'st-1',
+        levelId: 'lv1',
+        boundary: [
+          [0, 0],
+          [6, 0],
+          [6, 4],
+          [0, 4],
+        ],
+        heightOffset: 0,
+      },
+    ],
+    columns: [
+      {
+        id: 'c1',
+        typeId: 'ct-1',
+        levelId: 'lv1',
+        position: [1, 1],
+        baseOffset: 0,
+        top: { kind: 'unconnected', height: 3 },
+        rotation: 45,
+      },
+    ],
+    beams: [
+      {
+        id: 'b1',
+        typeId: 'bt-1',
+        levelId: 'lv1',
+        start: [0, 0],
+        end: [6, 0],
+        heightOffset: 3,
+        crossSectionRotation: 0,
+      },
+    ],
+    rooms: [
+      {
+        id: 'r1',
+        levelId: 'lv1',
+        name: 'Living room',
+        number: '1',
+        polygon: [
+          [0, 0],
+          [6, 0],
+          [6, 4],
+          [0, 4],
+        ],
+        floorMaterial: 'mat-oak',
+        baseOffset: 0,
+        top: { kind: 'unconnected', height: 3 },
+      },
+    ],
+    furniture: [
+      {
+        id: 'fu1',
+        typeId: 'ft-1',
+        levelId: 'lv1',
+        position: [3, 2],
+        rotation: 90,
+        scale: 1,
+        heightOffset: 0,
+      },
+    ],
+    views: [
+      {
+        id: 'v1',
+        name: 'Ground floor plan',
+        cameraPosition: [0, 40, 0],
+        cameraTarget: [0, 0, 0],
+        projection: 'orthographic',
+        levelId: 'lv1',
+        cutPlaneHeight: 1.2,
+        visibleLevelIds: ['lv1'],
+        cropRegion: { min: [-1, -1], max: [7, 5] },
+        workPlaneElevation: 0,
+      },
+      {
+        // The all-nulls variant, so the optional fields are exercised too.
+        id: 'v2',
+        name: 'Free 3D',
+        cameraPosition: [10, 10, 10],
+        cameraTarget: [0, 0, 0],
+        projection: 'perspective',
+        levelId: null,
+        cutPlaneHeight: null,
+        visibleLevelIds: null,
+        cropRegion: null,
+        workPlaneElevation: 0,
+      },
+    ],
+    dimensions: [
+      {
+        id: 'dim1',
+        viewId: 'v1',
+        kind: 'aligned',
+        ref1: { elementId: 'w1', pointIndex: 0 },
+        ref2: { elementId: 'w1', pointIndex: 1 },
+        textOverride: null,
+        witnessGap: 0.15,
+        offsetDistance: -0.3,
+      },
+    ],
+    annotations: [
+      {
+        id: 'ann1',
+        viewId: 'v1',
+        kind: 'text',
+        text: 'Note',
+        position: [2, 2],
+        leaderTarget: null,
+        rotation: 0,
+        textHeight: 0.2,
+      },
+      {
+        id: 'ann2',
+        viewId: 'v1',
+        kind: 'leader',
+        text: 'Pointing at the wall',
+        position: [4, 3],
+        leaderTarget: [3, 0],
+        rotation: -15,
+        textHeight: 0.2,
+      },
+    ],
+    roomTags: [
+      {
+        id: 'rtag1',
+        viewId: 'v1',
+        roomId: 'r1',
+        position: null,
+        showArea: true,
+        showNumber: true,
+        showName: true,
+      },
+    ],
+    columnGrids: [
+      {
+        id: 'grid1',
+        levelId: 'lv1',
+        name: 'Grid',
+        origin: [0, 0],
+        rotation: 0,
+        xAxes: [
+          { id: 'ax1', label: '1', spacing: 0 },
+          { id: 'ax2', label: '2', spacing: 5 },
+        ],
+        yAxes: [
+          { id: 'ay1', label: 'A', spacing: 0 },
+          { id: 'ay2', label: 'B', spacing: 4 },
+        ],
+        extension: 1,
+        bubbleRadius: 0.4,
+      },
+    ],
+    roofs: [
+      {
+        id: 'rf1',
+        typeId: 'rt-1',
+        levelId: 'lv2',
+        footprint: [
+          [0, 0],
+          [6, 0],
+          [6, 4],
+          [0, 4],
+        ],
+        edges: [
+          { angle: 30, overhang: 0.3 },
+          { angle: 30, overhang: 0.3 },
+          { angle: 30, overhang: 0.3 },
+          { angle: 30, overhang: 0.3 },
+        ],
+        baseHeight: 3,
+      },
+    ],
+    primitives: [
+      {
+        id: 'pr1',
+        typeId: 'pt-box',
+        levelId: 'lv1',
+        position: [8, 0],
+        heightOffset: 0,
+        rotation: 0,
+        scale: 1,
+      },
+      {
+        id: 'pr2',
+        typeId: 'pt-cylinder',
+        levelId: 'lv1',
+        position: [8.5, 0.5],
+        heightOffset: -0.5,
+        rotation: 15,
+        scale: 1.5,
+      },
+      {
+        id: 'pr3',
+        typeId: 'pt-sphere',
+        levelId: 'lv1',
+        position: [9, 1],
+        heightOffset: 0,
+        rotation: 0,
+        scale: 1,
+      },
+    ],
+    // A nested tree: the union feeds the cut, which is what makes this a tree not a pairing.
+    booleans: [
+      { id: 'bool1', levelId: 'lv1', op: 'union', operandIds: ['pr1', 'pr2'] },
+      { id: 'bool2', levelId: 'lv1', op: 'cut', operandIds: ['bool1', 'pr3'] },
+    ],
+  }
+}
+
+describe('golden scene-graph fixtures', () => {
+  it('the empty document still matches shared/fixtures/scene-v6-empty.json', async () => {
+    await expect(JSON.stringify(emptySceneGraph('fixture-project'), null, 2) + '\n').toMatchFileSnapshot(
+      '../../../shared/fixtures/scene-v6-empty.json',
+    )
+  })
+
+  it('the populated document still matches shared/fixtures/scene-v6-populated.json', async () => {
+    await expect(JSON.stringify(populatedSceneGraph(), null, 2) + '\n').toMatchFileSnapshot(
+      '../../../shared/fixtures/scene-v6-populated.json',
+    )
+  })
+
+  it('the populated fixture covers every primitive kind', () => {
+    const kinds = populatedSceneGraph()
+      .types.filter((t) => t.category === 'primitive')
+      .map((t) => (t.category === 'primitive' ? t.shape.kind : ''))
+    expect([...kinds].sort()).toEqual([...PRIMITIVE_KINDS].sort())
+  })
+
+  it('the populated fixture leaves no collection empty', () => {
+    // The Python side asserts the same thing. If a new collection is added to the schema and
+    // not to this fixture, the parity guarantee silently narrows — so both sides check.
+    const sg = populatedSceneGraph() as unknown as Record<string, unknown>
+    for (const [key, value] of Object.entries(sg)) {
+      if (!Array.isArray(value)) continue
+      expect(value.length, `${key} is empty in the populated fixture`).toBeGreaterThan(0)
+    }
+  })
+
+  it('pins the schema version the fixtures were written for', () => {
+    // A bump here is the signal to regenerate the fixtures AND update shared/python/models.py.
+    expect(SCHEMA_VERSION).toBe(6)
+  })
+})

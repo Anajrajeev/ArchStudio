@@ -1,0 +1,284 @@
+{
+  "schemaVersion": 6,
+  "projectId": "fixture-project",
+  "units": "m",
+  "types": [
+    {
+      "id": "wt-ext-200",
+      "category": "wall",
+      "name": "Exterior — 200mm",
+      "function": "exterior",
+      "layers": [
+        {
+          "material": "mat-plaster-white",
+          "thickness": 0.015,
+          "function": "finish"
+        },
+        {
+          "material": "mat-brick",
+          "thickness": 0.17,
+          "function": "structure"
+        },
+        {
+          "material": "mat-plaster-white",
+          "thickness": 0.015,
+          "function": "finish"
+        }
+      ]
+    },
+    {
+      "id": "wt-int-100",
+      "category": "wall",
+      "name": "Interior partition — 100mm",
+      "function": "partition",
+      "layers": [
+        {
+          "material": "mat-plaster-white",
+          "thickness": 0.0125,
+          "function": "finish"
+        },
+        {
+          "material": "mat-concrete",
+          "thickness": 0.075,
+          "function": "structure"
+        },
+        {
+          "material": "mat-plaster-white",
+          "thickness": 0.0125,
+          "function": "finish"
+        }
+      ]
+    },
+    {
+      "id": "dt-single-900",
+      "category": "door",
+      "name": "Single door — 900×2100",
+      "width": 0.9,
+      "height": 2.1,
+      "thickness": 0.045,
+      "operation": "single-swing",
+      "frameMaterial": "mat-timber",
+      "panelMaterial": "mat-timber"
+    },
+    {
+      "id": "wnt-1200",
+      "category": "window",
+      "name": "Window — 1200×1200",
+      "width": 1.2,
+      "height": 1.2,
+      "defaultSillHeight": 0.9,
+      "frameThickness": 0.06,
+      "partitioning": "double-vertical",
+      "frameMaterial": "mat-timber",
+      "glassMaterial": "mat-glass"
+    },
+    {
+      "id": "st-floor-200",
+      "category": "slab",
+      "name": "Floor slab — 200mm",
+      "function": "floor",
+      "layers": [
+        {
+          "material": "mat-oak",
+          "thickness": 0.02,
+          "function": "finish"
+        },
+        {
+          "material": "mat-concrete",
+          "thickness": 0.18,
+          "function": "structure"
+        }
+      ]
+    },
+    {
+      "id": "ct-rect-300",
+      "category": "column",
+      "name": "Column — 300×300",
+      "profile": {
+        "kind": "rectangular",
+        "width": 0.3,
+        "depth": 0.3
+      },
+      "material": "mat-concrete"
+    },
+    {
+      "id": "bt-rect-200x400",
+      "category": "beam",
+      "name": "Beam — 200×400",
+      "profile": {
+        "kind": "rectangular",
+        "width": 0.2,
+        "depth": 0.4
+      },
+      "material": "mat-concrete"
+    },
+    {
+      "id": "rt-tile-250",
+      "category": "roof",
+      "name": "Tiled roof — 250mm",
+      "layers": [
+        {
+          "material": "mat-tile",
+          "thickness": 0.02,
+          "function": "finish"
+        },
+        {
+          "material": "mat-timber",
+          "thickness": 0.23,
+          "function": "structure"
+        }
+      ]
+    },
+    {
+      "id": "pt-box",
+      "category": "primitive",
+      "name": "Box — 1×1×1",
+      "shape": {
+        "kind": "box",
+        "width": 1,
+        "depth": 1,
+        "height": 1
+      },
+      "material": "mat-concrete"
+    },
+    {
+      "id": "pt-cylinder",
+      "category": "primitive",
+      "name": "Cylinder — ⌀1 × 1",
+      "shape": {
+        "kind": "cylinder",
+        "radius": 0.5,
+        "height": 1,
+        "segments": 32
+      },
+      "material": "mat-concrete"
+    },
+    {
+      "id": "pt-cone",
+      "category": "primitive",
+      "name": "Cone — ⌀1 × 1",
+      "shape": {
+        "kind": "cone",
+        "radius": 0.5,
+        "height": 1,
+        "segments": 32
+      },
+      "material": "mat-concrete"
+    },
+    {
+      "id": "pt-sphere",
+      "category": "primitive",
+      "name": "Sphere — ⌀1",
+      "shape": {
+        "kind": "sphere",
+        "radius": 0.5,
+        "segments": 24
+      },
+      "material": "mat-concrete"
+    },
+    {
+      "id": "pt-prism",
+      "category": "primitive",
+      "name": "Prism — hexagonal",
+      "shape": {
+        "kind": "prism",
+        "radius": 0.5,
+        "height": 1,
+        "sides": 6
+      },
+      "material": "mat-concrete"
+    },
+    {
+      "id": "pt-wedge",
+      "category": "primitive",
+      "name": "Wedge — 1×1×1",
+      "shape": {
+        "kind": "wedge",
+        "width": 1,
+        "depth": 1,
+        "height": 1
+      },
+      "material": "mat-concrete"
+    },
+    {
+      "id": "pt-torus",
+      "category": "primitive",
+      "name": "Torus — ⌀1 tube 0.2",
+      "shape": {
+        "kind": "torus",
+        "radius": 0.5,
+        "tubeRadius": 0.2,
+        "radialSegments": 16,
+        "tubularSegments": 32
+      },
+      "material": "mat-steel"
+    }
+  ],
+  "levels": [],
+  "walls": [],
+  "openings": [],
+  "fillings": [],
+  "slabs": [],
+  "columns": [],
+  "beams": [],
+  "rooms": [],
+  "furniture": [],
+  "materials": [
+    {
+      "id": "mat-plaster-white",
+      "name": "White Plaster",
+      "color": "#EDEAE3",
+      "textureUrl": null
+    },
+    {
+      "id": "mat-oak",
+      "name": "Oak",
+      "color": "#B08850",
+      "textureUrl": null
+    },
+    {
+      "id": "mat-concrete",
+      "name": "Concrete",
+      "color": "#9E9E9E",
+      "textureUrl": null
+    },
+    {
+      "id": "mat-brick",
+      "name": "Brick",
+      "color": "#A8503A",
+      "textureUrl": null
+    },
+    {
+      "id": "mat-glass",
+      "name": "Glass",
+      "color": "#AFC6D2",
+      "textureUrl": null
+    },
+    {
+      "id": "mat-steel",
+      "name": "Steel",
+      "color": "#8B9199",
+      "textureUrl": null
+    },
+    {
+      "id": "mat-timber",
+      "name": "Timber",
+      "color": "#C79A62",
+      "textureUrl": null
+    },
+    {
+      "id": "mat-tile",
+      "name": "Ceramic Tile",
+      "color": "#D9D5CC",
+      "textureUrl": null
+    }
+  ],
+  "views": [],
+  "dimensions": [],
+  "annotations": [],
+  "roomTags": [],
+  "columnGrids": [],
+  "roofs": [],
+  "primitives": [],
+  "booleans": []
+}

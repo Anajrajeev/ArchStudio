@@ -1,14 +1,17 @@
-import pytest
-from httpx import AsyncClient, ASGITransport
-
-# We need a minimal .env for the app to start in tests
+"""Smoke test for the health endpoint."""
 import os
+
+import pytest
+from httpx import ASGITransport, AsyncClient
+
+# `app.config` validates its settings when it is imported, so a minimal environment has to
+# exist first. That is why the `app.main` import below deliberately sits after this code.
 os.environ.setdefault("SUPABASE_URL", "https://example.supabase.co")
 os.environ.setdefault("SUPABASE_SERVICE_ROLE_KEY", "test-service-role-key")
 os.environ.setdefault("SUPABASE_ANON_KEY", "test-anon-key")
 os.environ.setdefault("BYOK_ENCRYPTION_KEY", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
 
-from app.main import app
+from app.main import app  # noqa: E402
 
 
 @pytest.mark.asyncio

@@ -3,13 +3,16 @@ version: "3.9"
 services:
   backend:
     build:
-      context: ./backend
-      dockerfile: Dockerfile
+      # Repo root, so the image can include shared/python (the scene-graph models).
+      context: .
+      dockerfile: backend/Dockerfile
     ports:
       - "8000:8000"
     volumes:
       - ./backend:/app
-      - ./shared:/shared
+      # Must match where the Dockerfile puts it, or dev and the built image disagree about
+      # where `shared.python.models` lives — which is how this went unnoticed until E5.
+      - ./shared:/app/shared
     environment:
       - SUPABASE_URL=${SUPABASE_URL}
       - SUPABASE_SERVICE_ROLE_KEY=${SUPABASE_SERVICE_ROLE_KEY}

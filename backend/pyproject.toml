@@ -46,7 +46,13 @@ ignore = ["B008"]   # FastAPI Depends() in function defaults
 python_version = "3.12"
 strict = true
 ignore_missing_imports = true
+# The repo root, so `shared.python.models` resolves. The shared scene-graph models live
+# outside backend/ but are typechecked by the backend job — see .github/workflows/ci.yml.
+mypy_path = ".."
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+# Repo root on sys.path so tests import `shared.python.models` as a real package,
+# rather than the sys.path.insert hack this used to rely on.
+pythonpath = [".."]

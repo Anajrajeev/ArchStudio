@@ -57,11 +57,15 @@ jobs:
       - name: Install dependencies
         run: uv pip install --system -e ".[dev]"
 
+      # `shared/python` holds the scene-graph models but lives outside backend/, so every gate
+      # below reaches out to it explicitly. `--config` is required, not cosmetic: ruff resolves
+      # config by walking UP from each file, finds nothing above shared/, and would silently
+      # fall back to its defaults (line-length 88, E+F only) — green while enforcing the wrong rules.
       - name: Ruff lint
-        run: ruff check .
+        run: ruff check --config pyproject.toml . ../shared
 
       - name: Mypy typecheck
-        run: mypy app
+        run: mypy app ../shared/python
         env:
           SUPABASE_URL: https://example.supabase.co
           SUPABASE_SERVICE_ROLE_KEY: test-key
@@ -69,7 +73,7 @@ jobs:
           BYOK_ENCRYPTION_KEY: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
 
       - name: Pytest
-        run: pytest --cov=app --cov-report=term-missing
+        run: pytest --cov=app --cov=../shared/python --cov-report=term-missing
         env:
           SUPABASE_URL: https://example.supabase.co
           SUPABASE_SERVICE_ROLE_KEY: test-key

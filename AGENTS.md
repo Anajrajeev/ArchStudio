@@ -23,27 +23,38 @@ The single source of truth is a versioned JSON **scene graph** of typed, paramet
 All geometry operations live in ONE shared pure module at `shared/geometry/` — 2D, 3D, and
 exporters must use the same code.
 
-## Scene Graph Schema (v1)
+## Scene Graph Schema
 
-```json
-{
-  "schemaVersion": 1,
-  "projectId": "uuid",
-  "units": "m",
-  "storeys": [{ "id": "s1", "name": "Ground floor", "elevation": 0, "height": 2.8 }],
-  "walls": [{ "id": "w1", "storeyId": "s1", "start": [0,0], "end": [5,0],
-              "thickness": 0.2, "height": 2.8, "material": "mat-plaster-white" }],
-  "openings": [{ "id": "o1", "wallId": "w1", "type": "door|window",
-                 "offset": 1.2, "width": 0.9, "height": 2.1, "sillHeight": 0 }],
-  "rooms": [{ "id": "r1", "storeyId": "s1", "name": "Living room",
-              "polygon": [[0,0],[5,0],[5,4],[0,4]], "floorMaterial": "mat-oak" }],
-  "furniture": [{ "id": "f1", "storeyId": "s1", "catalogId": "sofa-01",
-                  "position": [2.5,2.0], "rotation": 90, "scale": 1 }],
-  "materials": [{ "id": "mat-oak", "name": "Oak", "color": "#b08850", "textureUrl": null }]
-}
-```
+**`shared/types/scene.ts` is the canonical schema. Do not treat any snapshot in this file as
+authoritative** — an inline copy here went stale and the Python models silently drifted five
+versions behind before E5 caught it.
 
-`schemaVersion` is bumped with migrations; old projects must always load.
+Current version: **v6**. Shape, in brief (read `scene.ts` for the real field lists):
+
+- **Category → Type → Instance** (D-009). Shape and composition live on a shared `ElementTypeDef`
+  (9 categories); placement and extent live on the instance. Edit the type, every instance updates.
+- `levels[]` (not `storeys`), with a `TopConstraint` union so elements can track a level or a fixed
+  height.
+- Elements: `walls` (line or arc baselines), `openings` → `fillings` (the IFC host → opening →
+  filling chain), `slabs`, `columns`, `beams`, `roofs`, `rooms`, `furniture`, `columnGrids`,
+  `primitives`, `booleans` (a parametric CSG tree — D-019).
+- View-scoped annotation: `views`, `dimensions`, `annotations`, `roomTags`.
+
+`schemaVersion` is bumped with migrations; **old projects must always load.**
+
+### Keeping the two languages in sync
+
+`shared/python/models.py` mirrors `scene.ts` as Pydantic v2 models. Migration is implemented
+**only** in TypeScript (`shared/types/migrate.ts`) and runs client-side; Python refuses any
+non-current version with an actionable message rather than carrying a second copy of that logic.
+
+The two are locked together by golden fixtures in `shared/fixtures/`: the TS suite asserts it still
+emits them, and the Python suite asserts it still parses them (with `extra="forbid"`, so a
+collection added on one side and not the other fails loudly). **Any schema change therefore means:**
+
+1. Edit `shared/types/scene.ts` and add a migration in `shared/types/migrate.ts`.
+2. Mirror it in `shared/python/models.py`.
+3. Regenerate the fixtures: `cd frontend && npx vitest run fixtures -u`.
 
 ## Repository Layout
 
