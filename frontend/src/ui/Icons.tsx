@@ -214,6 +214,22 @@ export const IconRoof = (p: IconProps) => (
   </SvgFill>
 )
 
+/** A solid, drawn as an isometric cube — the universal "primitive" glyph across DCC tools. */
+export const IconPrimitive = (p: IconProps) => (
+  <SvgFill {...p}>
+    <path d="M8 1L14.5 4.6v7L8 15.2 1.5 11.6v-7z" opacity="0.32" />
+    <path d="M8 1L14.5 4.6 8 8.2 1.5 4.6z" />
+  </SvgFill>
+)
+
+/** Boolean ops: two overlapping circles, the classic set-operation mark. */
+export const IconBoolean = (p: IconProps) => (
+  <Svg {...p}>
+    <circle cx="6" cy="8" r="4.6" />
+    <circle cx="10" cy="8" r="4.6" />
+  </Svg>
+)
+
 // ---- Actions (stroke) ------------------------------------------------------
 
 export const IconUndo = (p: IconProps) => (

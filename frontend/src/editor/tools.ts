@@ -5,7 +5,13 @@
  * Per-click-phase hints are why SketchUp is learnable without a manual: at any instant you know
  * what state you're in, what constraint is active, and what the number is.
  */
-import { findLevel, type Baseline, type SceneGraph, type Vec2 } from '../../../shared/types/scene'
+import {
+  findLevel,
+  findPrimitiveType,
+  type Baseline,
+  type SceneGraph,
+  type Vec2,
+} from '../../../shared/types/scene'
 import {
   distance,
   projectPointToSegment,
@@ -32,6 +38,7 @@ import {
   addBeam,
   addFilledOpening,
   addRoof,
+  addPrimitive,
 } from '../scene/mutations'
 import { newId as generateId } from '../scene/ids'
 import { TOOL_POINTS, type EditorState, type Tool, type WallMode } from '../scene/store'
@@ -151,6 +158,11 @@ export function toolHint(tool: Tool, pointCount: number, wallMode: WallMode = 'l
       return {
         prompt: 'Click to place a column grid — edit axes in Properties',
         modifiers: 'Esc cancel',
+      }
+    case 'primitive':
+      return {
+        prompt: 'Click to place a solid — combine two with Union/Cut/Intersect in Modify',
+        modifiers: 'Pick the shape in the ribbon · Esc cancel',
       }
     case 'trim':
       return { prompt: 'Click the cutting edge, then the part to KEEP', modifiers: 'Esc cancel' }
@@ -345,6 +357,25 @@ export function buildCommit(state: EditorState, points: Vec2[]): CommitResult | 
           addRoof(scene, defaultRoof(id, state.activeRoofTypeId, activeLevelId, points, baseHeight)),
         keepPoints: [],
         selectAfter: () => id,
+      }
+    }
+
+    case 'primitive': {
+      if (points.length < 1) return null
+      // Refuse rather than invent a type: a primitive with no shape has no geometry, and silently
+      // substituting one would hide that the document is missing the type it thinks it has.
+      const type = findPrimitiveType(state.scene, state.activePrimitiveTypeId)
+      if (!type) return null
+      let newId = ''
+      return {
+        label: `Add ${type.name}`,
+        produce: (scene) => {
+          const r = addPrimitive(scene, activeLevelId, state.activePrimitiveTypeId, points[0])
+          newId = r.id
+          return r.scene
+        },
+        keepPoints: [],
+        selectAfter: () => newId,
       }
     }
 

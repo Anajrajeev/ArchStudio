@@ -63,6 +63,9 @@ export type Tool =
   | 'leader'
   // Column grid (B6): one click places a default grid, edited afterward in Properties.
   | 'columngrid'
+  // Primitive solid (B7): one click places the active primitive type. Booleans are verbs in the
+  // Modify panel rather than a tool — they act on elements that already exist.
+  | 'primitive'
 
 /**
  * How the wall tool interprets its points. `arc` collects a third point the wall must pass
@@ -93,6 +96,7 @@ export const TOOL_POINTS: Record<Tool, number> = {
   text: 1,
   leader: 2,
   columngrid: 1,
+  primitive: 1,
 }
 
 export type ToolPhase = 'idle' | 'collecting'
@@ -176,6 +180,7 @@ export interface EditorState {
   activeColumnTypeId: string
   activeBeamTypeId: string
   activeRoofTypeId: string
+  activePrimitiveTypeId: string
 
   // --- pointer / snapping
   snap: SnapResult | null
@@ -324,6 +329,7 @@ export const useEditor = create<EditorState>((set, get) => ({
   activeColumnTypeId: 'ct-rect-300',
   activeBeamTypeId: 'bt-rect-200x400',
   activeRoofTypeId: 'rt-tile-250',
+  activePrimitiveTypeId: 'pt-box',
 
   snap: null,
   cursorWorld: null,
@@ -405,6 +411,9 @@ export const useEditor = create<EditorState>((set, get) => ({
         break
       case 'roof':
         set({ activeRoofTypeId: typeId })
+        break
+      case 'primitive':
+        set({ activePrimitiveTypeId: typeId })
         break
     }
   },

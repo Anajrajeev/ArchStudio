@@ -18,7 +18,25 @@ import {
   profileExtents,
   type Box3D,
 } from '../../../shared/geometry/index'
-import { findLevel, findType, type SceneGraph, type Vec2 } from '../../../shared/types/scene'
+import { resolveRoof, isRoofError } from '../../../shared/geometry/roof'
+import {
+  freePrimitives,
+  rootBooleanNodes,
+} from '../../../shared/geometry/booleanTree'
+import {
+  findLevel,
+  findType,
+  findPrimitiveType,
+  type SceneGraph,
+  type Vec2,
+  type Vec3,
+} from '../../../shared/types/scene'
+import {
+  evaluateBooleanGeometry,
+  isBooleanEvalError,
+  primitiveWorldGeometry,
+  type CsgModule,
+} from '../geometry/evaluateBoolean'
 import { materialColor } from '../scene/materials'
 
 /** Cache one material per colour so the exported file doesn't carry hundreds of duplicates. */
@@ -53,7 +71,29 @@ function polygonToShape(polygon: Vec2[]): THREE.Shape {
   return new THREE.Shape(pts.map(([x, y]) => new THREE.Vector2(x, y)))
 }
 
-export function buildSceneGroup(scene: SceneGraph): THREE.Group {
+/** Triangulate `resolveRoof`'s planar faces — the same conversion `viewport/Roofs.tsx` performs. */
+function roofFacesToGeometry(faces: { vertices: Vec3[] }[]): THREE.BufferGeometry {
+  const positions: number[] = []
+  for (const face of faces) {
+    const [a, b, c, d] = face.vertices
+    positions.push(...a, ...b, ...c)
+    if (d) positions.push(...a, ...c, ...d)
+  }
+  const geom = new THREE.BufferGeometry()
+  geom.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3))
+  geom.computeVertexNormals()
+  return geom
+}
+
+/**
+ * Build the export group.
+ *
+ * `csg` is the lazily-loaded `three-bvh-csg` module (DECISIONS.md D-019). It is optional so this
+ * function stays synchronous: `exportScene` loads it only when the scene actually contains a
+ * boolean node. Without it, boolean results are omitted rather than exported wrong — and
+ * `exportScene` never calls this without it when booleans exist.
+ */
+export function buildSceneGroup(scene: SceneGraph, csg?: CsgModule): THREE.Group {
   const root = new THREE.Group()
   root.name = 'ArchStudioScene'
   const mat = materialCache()
@@ -223,6 +263,48 @@ export function buildSceneGroup(scene: SceneGraph): THREE.Group {
     mesh.scale.setScalar(item.scale)
     mesh.name = `furniture:${item.id}`
     groupFor(item.levelId).add(mesh)
+  }
+
+  // ---- Roofs ----
+  // These were missing until B7: the viewport drew a roof that no exported file contained, which
+  // broke the one-geometry rule the rest of this file exists to uphold. Same `resolveRoof` the
+  // renderer calls, so the two cannot diverge. A roof that refuses to resolve (D-018) exports
+  // nothing, exactly as it renders nothing.
+  for (const roof of scene.roofs) {
+    const resolved = resolveRoof(roof)
+    if (isRoofError(resolved)) continue
+    const type = findType(scene, roof.typeId)
+    const color =
+      type?.category === 'roof' && type.layers[0]
+        ? materialColor(scene, type.layers[0].material)
+        : '#8a6a4a'
+    const mesh = new THREE.Mesh(roofFacesToGeometry(resolved.faces), mat(color))
+    mesh.name = `roof:${roof.id}`
+    groupFor(roof.levelId).add(mesh)
+  }
+
+  // ---- Primitive solids (B7) ----
+  // Only primitives NOT consumed by a boolean; a consumed one is exported as part of its result.
+  for (const primitive of freePrimitives(scene)) {
+    const geom = primitiveWorldGeometry(scene, primitive)
+    if (isBooleanEvalError(geom)) continue
+    const type = findPrimitiveType(scene, primitive.typeId)
+    const mesh = new THREE.Mesh(geom, mat(materialColor(scene, type?.material ?? 'mat-concrete')))
+    mesh.name = `primitive:${primitive.id}`
+    groupFor(primitive.levelId).add(mesh)
+  }
+
+  // ---- Boolean results (B7) ----
+  if (csg) {
+    for (const node of rootBooleanNodes(scene)) {
+      const geom = evaluateBooleanGeometry(scene, node.id, csg)
+      if (isBooleanEvalError(geom)) continue
+      const first = scene.primitives.find((p) => p.id === node.operandIds[0])
+      const type = first ? findPrimitiveType(scene, first.typeId) : undefined
+      const mesh = new THREE.Mesh(geom, mat(materialColor(scene, type?.material ?? 'mat-concrete')))
+      mesh.name = `boolean:${node.id}`
+      groupFor(node.levelId).add(mesh)
+    }
   }
 
   return root

@@ -18,6 +18,7 @@ import Overlays from './Overlays'
 import Handles from './Handles'
 import { Walls, Fillings, Slabs, Rooms, Columns, Beams, Furniture, type RenderOpts } from './Elements'
 import { Roofs } from './Roofs'
+import { Primitives } from './Primitives'
 import Dimensions from './Dimensions'
 import Annotations from './Annotations'
 import ColumnGrids from './ColumnGrids'
@@ -313,6 +314,7 @@ function SceneContent({ theme }: { theme: CanvasTheme }) {
             <Beams opts={opts} levelId={level.id} />
             <Furniture opts={opts} levelId={level.id} />
             <Roofs opts={opts} levelId={level.id} />
+            <Primitives opts={opts} levelId={level.id} />
           </ClippedGroup>
         )
       })}

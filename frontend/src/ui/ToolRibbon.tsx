@@ -32,6 +32,7 @@ import {
   IconLeader,
   IconColumnGrid,
   IconRoof,
+  IconPrimitive,
 } from './Icons'
 
 interface ToolDef {
@@ -59,6 +60,7 @@ const GROUPS: ToolDef[][] = [
     { tool: 'beam', icon: <IconBeam />, shortcut: 'B', category: 'beam' },
     { tool: 'columngrid', icon: <IconColumnGrid />, shortcut: 'Y' },
   ],
+  [{ tool: 'primitive', icon: <IconPrimitive />, shortcut: 'V', category: 'primitive' }],
   [
     { tool: 'trim', icon: <IconTrim />, shortcut: 'T' },
     { tool: 'extend', icon: <IconExtend />, shortcut: 'E' },
@@ -253,6 +255,10 @@ function TypeSelector({ category }: { category: TypeCategory }) {
         return s.activeColumnTypeId
       case 'beam':
         return s.activeBeamTypeId
+      case 'roof':
+        return s.activeRoofTypeId
+      case 'primitive':
+        return s.activePrimitiveTypeId
       default:
         return ''
     }

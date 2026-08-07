@@ -22,7 +22,8 @@
       "roomtag": "Room tag",
       "text": "Text note",
       "leader": "Leader",
-      "columngrid": "Column grid"
+      "columngrid": "Column grid",
+      "primitive": "Primitive solid"
     },
     "undo": "Undo",
     "redo": "Redo",
@@ -60,7 +61,13 @@
     "alignY": "Along Y",
     "alignMin": "Min",
     "alignCentre": "Centre",
-    "alignMax": "Max"
+    "alignMax": "Max",
+    "boolean": "Boolean",
+    "booleanHint": "Cut removes the later shapes from the first selected one.",
+    "union": "Union",
+    "cut": "Cut",
+    "intersect": "Intersect",
+    "explode": "Explode boolean"
   },
   "viewport": {
     "emptyTitle": "Draw directly in the 3D view",
@@ -97,7 +104,11 @@
     "rooms": "Rooms",
     "columns": "Columns",
     "beams": "Beams",
-    "levelArea": "Level area"
+    "levelArea": "Level area",
+    "roofs": "Roofs",
+    "columnGrids": "Column grids",
+    "primitives": "Solids",
+    "booleans": "Booleans"
   },
   "status": {
     "noSnap": "No snap",
@@ -212,7 +223,22 @@
     "roofAngle": "Slope angle",
     "roofOverhang": "Overhang",
     "roofBaseHeight": "Eave base height",
-    "roofError": "This roof shape can't be drawn"
+    "roofError": "This roof shape can't be drawn",
+    "primitiveShape": "Shape",
+    "primitiveError": "Cannot build this shape",
+    "radius": "Radius",
+    "depth": "Depth",
+    "segments": "Segments",
+    "sides": "Sides",
+    "tubeRadius": "Tube radius",
+    "radialSegments": "Radial segments",
+    "tubularSegments": "Tubular segments",
+    "booleanOp": "Operation",
+    "booleanOperands": "Shapes combined",
+    "booleanUnion": "Union",
+    "booleanCut": "Cut",
+    "booleanIntersect": "Intersect",
+    "booleanError": "Cannot resolve this boolean"
   },
   "chat": {
     "placeholder": "Describe what you want to design...",

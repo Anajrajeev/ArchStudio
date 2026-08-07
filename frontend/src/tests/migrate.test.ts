@@ -3,7 +3,12 @@
  */
 import { describe, it, expect } from 'vitest'
 import { migrateScene, SchemaMigrationError } from '../../../shared/types/migrate'
-import { SCHEMA_VERSION, emptySceneGraph, assemblyThickness } from '../../../shared/types/scene'
+import {
+  SCHEMA_VERSION,
+  emptySceneGraph,
+  assemblyThickness,
+  PRIMITIVE_KINDS,
+} from '../../../shared/types/scene'
 import { resolveWall, wallSolidBoxes } from '../../../shared/geometry/index'
 
 /** A representative v1 document, in exactly the shape Phase 1 shipped. */
@@ -218,12 +223,12 @@ describe('migrateScene failure modes', () => {
   })
 
   it('gives an actionable message for a future version', () => {
-    expect(() => migrateScene({ schemaVersion: 99 })).toThrow(/understands up to v5/)
+    expect(() => migrateScene({ schemaVersion: 99 })).toThrow(new RegExp(`understands up to v${SCHEMA_VERSION}`))
   })
 })
 
 // ---------------------------------------------------------------------------
-// v2 → v5 (chained through v3, v4)
+// v2 → v6 (chained)
 // ---------------------------------------------------------------------------
 
 /** A representative v2 document (no views/dimensions/annotations/roomTags/columnGrids/roofs). */
@@ -244,11 +249,11 @@ const V2 = {
   materials: [],
 }
 
-describe('migrateScene v2 → v5 (chained through v3, v4)', () => {
+describe('migrateScene v2 → v6 (chained)', () => {
   const migrated = migrateScene(V2)
 
   it('bumps the schema version to 5', () => {
-    expect(migrated.schemaVersion).toBe(5)
+    expect(migrated.schemaVersion).toBe(SCHEMA_VERSION)
   })
 
   it('preserves all existing data', () => {
@@ -267,16 +272,16 @@ describe('migrateScene v2 → v5 (chained through v3, v4)', () => {
     expect(migrated.roofs).toEqual([])
   })
 
-  it('is idempotent — a v5 document passes through untouched', () => {
+  it('is idempotent — a current-version document passes through untouched', () => {
     expect(migrateScene(migrated)).toBe(migrated)
   })
 })
 
-describe('migrateScene v1 → v5 (chained)', () => {
+describe('migrateScene v1 → v6 (chained)', () => {
   const migrated = migrateScene(V1)
 
-  it('arrives at v5 with all new collections', () => {
-    expect(migrated.schemaVersion).toBe(5)
+  it('arrives at the current version with all new collections', () => {
+    expect(migrated.schemaVersion).toBe(SCHEMA_VERSION)
     expect(migrated.views).toEqual([])
     expect(migrated.dimensions).toEqual([])
     expect(migrated.annotations).toEqual([])
@@ -295,7 +300,7 @@ describe('migrateScene v1 → v5 (chained)', () => {
 })
 
 // ---------------------------------------------------------------------------
-// v3 → v5 (chained through v4)
+// v3 → v6 (chained)
 // ---------------------------------------------------------------------------
 
 /** A representative v3 document (no columnGrids/roofs). */
@@ -320,11 +325,11 @@ const V3 = {
   roomTags: [],
 }
 
-describe('migrateScene v3 → v5 (chained through v4)', () => {
+describe('migrateScene v3 → v6 (chained)', () => {
   const migrated = migrateScene(V3)
 
-  it('bumps the schema version to 5 and adds columnGrids + roofs', () => {
-    expect(migrated.schemaVersion).toBe(5)
+  it('bumps to the current version and adds columnGrids + roofs', () => {
+    expect(migrated.schemaVersion).toBe(SCHEMA_VERSION)
     expect(migrated.columnGrids).toEqual([])
     expect(migrated.roofs).toEqual([])
   })
@@ -335,7 +340,7 @@ describe('migrateScene v3 → v5 (chained through v4)', () => {
 })
 
 // ---------------------------------------------------------------------------
-// v4 → v5
+// v4 → v6 (chained)
 // ---------------------------------------------------------------------------
 
 /** A representative v4 document (no roofs). */
@@ -361,15 +366,116 @@ const V4 = {
   columnGrids: [],
 }
 
-describe('migrateScene v4 → v5', () => {
+describe('migrateScene v4 → v6 (chained)', () => {
   const migrated = migrateScene(V4)
 
-  it('bumps the schema version to 5 and adds roofs', () => {
-    expect(migrated.schemaVersion).toBe(5)
+  it('bumps to the current version and adds roofs', () => {
+    expect(migrated.schemaVersion).toBe(SCHEMA_VERSION)
     expect(migrated.roofs).toEqual([])
   })
 
   it('preserves existing v4 fields', () => {
     expect(migrated.projectId).toBe('proj-v4')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// v5 → v6 (primitive solids and boolean trees, B7 / D-019)
+// ---------------------------------------------------------------------------
+
+/** A representative v5 document (no primitives/booleans). */
+const V5 = {
+  schemaVersion: 5,
+  projectId: 'proj-v5',
+  units: 'm',
+  types: [
+    {
+      id: 'wt-custom',
+      category: 'wall' as const,
+      name: 'Custom wall',
+      function: 'interior' as const,
+      layers: [{ material: 'mat-concrete', thickness: 0.15, function: 'structure' as const }],
+    },
+  ],
+  levels: [{ id: 'lv1', name: 'Ground', elevation: 0, height: 3, isBuildingStory: true, computationHeight: 0 }],
+  walls: [],
+  openings: [],
+  fillings: [],
+  slabs: [],
+  columns: [],
+  beams: [],
+  rooms: [],
+  furniture: [],
+  materials: [],
+  views: [],
+  dimensions: [],
+  annotations: [],
+  roomTags: [],
+  columnGrids: [],
+  roofs: [],
+}
+
+describe('migrateScene v5 → v6', () => {
+  const migrated = migrateScene(V5)
+
+  it('bumps to the current version and adds primitives + booleans', () => {
+    expect(migrated.schemaVersion).toBe(SCHEMA_VERSION)
+    expect(migrated.primitives).toEqual([])
+    expect(migrated.booleans).toEqual([])
+  })
+
+  it('preserves existing v5 fields', () => {
+    expect(migrated.projectId).toBe('proj-v5')
+    expect(migrated.levels).toHaveLength(1)
+  })
+
+  it("keeps the document's own types", () => {
+    // The user's custom wall type must survive the back-fill below untouched.
+    expect(migrated.types.find((t) => t.id === 'wt-custom')?.name).toBe('Custom wall')
+  })
+
+  it('back-fills the default primitive types so the tool is usable on an old project', () => {
+    // Without this, every pre-v6 document would open with the primitive tool permanently refusing.
+    const primitiveTypes = migrated.types.filter((t) => t.category === 'primitive')
+    expect(primitiveTypes.length).toBeGreaterThanOrEqual(7)
+    const kinds = primitiveTypes.map((t) => (t.category === 'primitive' ? t.shape.kind : ''))
+    expect([...kinds].sort()).toEqual([...PRIMITIVE_KINDS].sort())
+  })
+
+  it('does not duplicate a primitive type the document already had', () => {
+    const withBox = {
+      ...V5,
+      types: [
+        ...V5.types,
+        {
+          id: 'pt-box',
+          category: 'primitive' as const,
+          name: 'My own box',
+          shape: { kind: 'box' as const, width: 5, depth: 5, height: 5 },
+          material: 'mat-oak',
+        },
+      ],
+    }
+    const result = migrateScene(withBox)
+    const boxes = result.types.filter((t) => t.id === 'pt-box')
+    expect(boxes).toHaveLength(1)
+    // And the user's version wins — a migration must never overwrite authored data.
+    expect(boxes[0].name).toBe('My own box')
+  })
+})
+
+describe('the full v1 → v6 chain reaches primitives', () => {
+  const migrated = migrateScene(V1)
+
+  it('arrives at v6 with both new collections', () => {
+    expect(migrated.schemaVersion).toBe(SCHEMA_VERSION)
+    expect(migrated.primitives).toEqual([])
+    expect(migrated.booleans).toEqual([])
+  })
+
+  it('still preserves the original v1 geometry after five migrations', () => {
+    expect(migrated.walls).toHaveLength(3)
+    expect(migrated.openings).toHaveLength(2)
+    expect(migrated.fillings).toHaveLength(2)
   })
 })

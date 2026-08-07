@@ -30,8 +30,12 @@ import {
   type GridAxis,
   type Roof,
   type RoofEdge,
+  type Primitive,
+  type BooleanNode,
+  type BooleanOp,
 } from '../../../shared/types/scene'
 import { resolveWall, baselineLength } from '../../../shared/geometry/index'
+import { booleanOpLabel } from '../../../shared/geometry/booleanTree'
 import {
   applyTransform,
   transformBaseline,
@@ -55,6 +59,8 @@ export type ElementKind =
   | 'roomTag'
   | 'columnGrid'
   | 'roof'
+  | 'primitive'
+  | 'boolean'
 
 export interface SelectedElement {
   kind: ElementKind
@@ -76,6 +82,8 @@ export function findElement(scene: SceneGraph, id: string): SelectedElement | nu
   if (scene.roomTags.some((t) => t.id === id)) return { kind: 'roomTag', id }
   if (scene.columnGrids.some((g) => g.id === id)) return { kind: 'columnGrid', id }
   if (scene.roofs.some((r) => r.id === id)) return { kind: 'roof', id }
+  if (scene.primitives.some((p) => p.id === id)) return { kind: 'primitive', id }
+  if (scene.booleans.some((b) => b.id === id)) return { kind: 'boolean', id }
   if (scene.levels.some((l) => l.id === id)) return { kind: 'level', id }
   return null
 }
@@ -98,6 +106,10 @@ export function levelIdOf(scene: SceneGraph, id: string): string | null {
   if (grid) return grid.levelId
   const roof = scene.roofs.find((r) => r.id === id)
   if (roof) return roof.levelId
+  const primitive = scene.primitives.find((p) => p.id === id)
+  if (primitive) return primitive.levelId
+  const boolNode = scene.booleans.find((b) => b.id === id)
+  if (boolNode) return boolNode.levelId
   const opening = scene.openings.find((o) => o.id === id)
   if (opening) return levelIdOf(scene, opening.hostId)
   const filling = scene.fillings.find((f) => f.id === id)
@@ -525,6 +537,16 @@ export function moveElement(scene: SceneGraph, id: string, delta: Vec2): SceneGr
       const f = scene.furniture.find((x) => x.id === id)!
       return updateFurniture(scene, id, { position: shift(f.position, dx, dy) })
     }
+    case 'primitive': {
+      const p = scene.primitives.find((x) => x.id === id)!
+      return updatePrimitive(scene, id, { position: shift(p.position, dx, dy) })
+    }
+    case 'boolean': {
+      // A boolean has no position of its own — it is wherever its operands are. Moving the result
+      // moves every leaf primitive under it, so the shape keeps its form instead of shearing.
+      const node = scene.booleans.find((x) => x.id === id)!
+      return node.operandIds.reduce((acc, operandId) => moveElement(acc, operandId, delta), scene)
+    }
     case 'opening':
     case 'filling': {
       // An opening is hosted — dragging it slides it along the wall rather than off it.
@@ -599,6 +621,19 @@ export function transformElement(scene: SceneGraph, id: string, xf: Transform2D)
         rotation: transformRotation(f.rotation, xf),
       })
     }
+    case 'primitive': {
+      const pr = scene.primitives.find((x) => x.id === id)!
+      return updatePrimitive(scene, id, {
+        position: p(pr.position),
+        rotation: transformRotation(pr.rotation, xf),
+      })
+    }
+    case 'boolean': {
+      // As with `moveElement`: transform the leaves, not the node. Mirroring a cut must mirror the
+      // cutter too, or the result changes shape rather than position.
+      const node = scene.booleans.find((x) => x.id === id)!
+      return node.operandIds.reduce((acc, operandId) => transformElement(acc, operandId, xf), scene)
+    }
     default:
       return scene
   }
@@ -668,6 +703,27 @@ export function duplicateElement(
       const copy: FurnitureItem = { ...f, id: newId('fn'), position: [...f.position] as Vec2 }
       return { scene: { ...scene, furniture: [...scene.furniture, copy] }, id: copy.id }
     }
+    case 'primitive': {
+      const p = scene.primitives.find((x) => x.id === id)!
+      const copy: Primitive = { ...p, id: newId('pr'), position: [...p.position] as Vec2 }
+      return { scene: { ...scene, primitives: [...scene.primitives, copy] }, id: copy.id }
+    }
+    case 'boolean': {
+      // Copying a boolean must deep-copy the whole subtree. Sharing operands with the original
+      // would mean dragging the copy also moved the original — the copies would not be independent
+      // objects at all. The mirror of the wall → openings → fillings cascade above.
+      const node = scene.booleans.find((x) => x.id === id)!
+      let next = scene
+      const copiedOperandIds: string[] = []
+      for (const operandId of node.operandIds) {
+        const copied = duplicateElement(next, operandId)
+        if (!copied) return null
+        next = copied.scene
+        copiedOperandIds.push(copied.id)
+      }
+      const copy: BooleanNode = { ...node, id: newId('bool'), operandIds: copiedOperandIds }
+      return { scene: { ...next, booleans: [...next.booleans, copy] }, id: copy.id }
+    }
     default:
       return null
   }
@@ -688,6 +744,8 @@ export function setElementType(scene: SceneGraph, id: string, typeId: string): S
       return updateBeam(scene, id, { typeId })
     case 'furniture':
       return updateFurniture(scene, id, { typeId })
+    case 'primitive':
+      return updatePrimitive(scene, id, { typeId })
     case 'filling':
       return syncOpeningToFilling(updateFilling(scene, id, { typeId }), id)
     default:
@@ -749,6 +807,17 @@ export function deleteElement(scene: SceneGraph, id: string): SceneGraph {
       return { ...scene, columnGrids: scene.columnGrids.filter((g) => g.id !== id) }
     case 'roof':
       return { ...scene, roofs: scene.roofs.filter((r) => r.id !== id) }
+    case 'primitive':
+      // Deleting a shape that a boolean uses must also repair that boolean, or the tree would be
+      // left referencing an id that no longer exists and would refuse to resolve from then on.
+      return pruneBooleanOperand(
+        { ...scene, primitives: scene.primitives.filter((p) => p.id !== id) },
+        id,
+      )
+    case 'boolean':
+      // Deleting the OPERATION releases its operands rather than destroying them (see
+      // `dissolveBooleanNode`), but a node consumed by a parent still has to be pruned from it.
+      return pruneBooleanOperand(dissolveBooleanNode(scene, id), id)
     case 'level': {
       const doomedWalls = scene.walls.filter((w) => w.levelId === id).map((w) => w.id)
       const doomedOpenings = scene.openings
@@ -767,6 +836,8 @@ export function deleteElement(scene: SceneGraph, id: string): SceneGraph {
         furniture: scene.furniture.filter((f) => f.levelId !== id),
         columnGrids: scene.columnGrids.filter((g) => g.levelId !== id),
         roofs: scene.roofs.filter((r) => r.levelId !== id),
+        primitives: scene.primitives.filter((p) => p.levelId !== id),
+        booleans: scene.booleans.filter((b) => b.levelId !== id),
       }
     }
     default:
@@ -833,6 +904,14 @@ export function elementLabel(scene: SceneGraph, id: string): string {
     case 'roof': {
       const r = scene.roofs.find((x) => x.id === id)!
       return `${typeName(r.typeId)} · ${r.edges[0]?.angle ?? 0}°`
+    }
+    case 'primitive': {
+      const p = scene.primitives.find((x) => x.id === id)!
+      return typeName(p.typeId)
+    }
+    case 'boolean': {
+      const b = scene.booleans.find((x) => x.id === id)!
+      return `${booleanOpLabel(b.op)} (${b.operandIds.length})`
     }
   }
 }
@@ -971,6 +1050,99 @@ export function removeRoof(scene: SceneGraph, id: string): SceneGraph {
 
 export function updateRoof(scene: SceneGraph, id: string, patch: Partial<Roof>): SceneGraph {
   return { ...scene, roofs: scene.roofs.map((r) => (r.id === id ? { ...r, ...patch, id: r.id } : r)) }
+}
+
+// ---------------------------------------------------------------------------
+// Primitive solids & boolean trees (B7 — see DECISIONS.md D-019)
+// ---------------------------------------------------------------------------
+
+export function addPrimitive(
+  scene: SceneGraph,
+  levelId: string,
+  typeId: string,
+  position: Vec2,
+): { scene: SceneGraph; id: string } {
+  const primitive: Primitive = {
+    id: newId('pr'),
+    typeId,
+    levelId,
+    position,
+    heightOffset: 0,
+    rotation: 0,
+    scale: 1,
+  }
+  return { scene: { ...scene, primitives: [...scene.primitives, primitive] }, id: primitive.id }
+}
+
+export function updatePrimitive(
+  scene: SceneGraph,
+  id: string,
+  patch: Partial<Primitive>,
+): SceneGraph {
+  return {
+    ...scene,
+    primitives: scene.primitives.map((p) => (p.id === id ? { ...p, ...patch, id: p.id } : p)),
+  }
+}
+
+export function addBooleanNode(
+  scene: SceneGraph,
+  levelId: string,
+  op: BooleanOp,
+  operandIds: string[],
+): { scene: SceneGraph; id: string } {
+  const node: BooleanNode = { id: newId('bool'), levelId, op, operandIds: [...operandIds] }
+  return { scene: { ...scene, booleans: [...scene.booleans, node] }, id: node.id }
+}
+
+export function updateBooleanNode(
+  scene: SceneGraph,
+  id: string,
+  patch: Partial<BooleanNode>,
+): SceneGraph {
+  return {
+    ...scene,
+    booleans: scene.booleans.map((b) => (b.id === id ? { ...b, ...patch, id: b.id } : b)),
+  }
+}
+
+/**
+ * Dissolve a boolean node, releasing its operands back to being ordinary visible elements.
+ *
+ * This is the counterpart to creating one, and it is why `deleteElement` on a boolean does NOT
+ * destroy the shapes inside it: combining two boxes is an edit, not a consumption, so undoing that
+ * decision must give the boxes back. Deleting the *shapes* is a separate, explicit action.
+ */
+export function dissolveBooleanNode(scene: SceneGraph, id: string): SceneGraph {
+  return { ...scene, booleans: scene.booleans.filter((b) => b.id !== id) }
+}
+
+/**
+ * Remove an id from every boolean node that uses it as an operand, dropping any node left with
+ * fewer than two operands (a "union of one shape" is not a thing — see `MIN_OPERANDS`).
+ *
+ * Applied recursively, because dropping a node can itself orphan the node above it.
+ */
+function pruneBooleanOperand(scene: SceneGraph, removedId: string): SceneGraph {
+  let next = scene
+  let doomed: string[] = [removedId]
+
+  while (doomed.length > 0) {
+    const removing = doomed
+    doomed = []
+    const booleans: BooleanNode[] = []
+    for (const node of next.booleans) {
+      if (removing.includes(node.id)) continue
+      const operandIds = node.operandIds.filter((o) => !removing.includes(o))
+      if (operandIds.length < 2) {
+        doomed.push(node.id)
+        continue
+      }
+      booleans.push(operandIds.length === node.operandIds.length ? node : { ...node, operandIds })
+    }
+    next = { ...next, booleans }
+  }
+  return next
 }
 
 /** Set every edge's angle/overhang at once — v1 requires them uniform (D-018). */

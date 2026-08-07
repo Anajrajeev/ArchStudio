@@ -5,6 +5,7 @@
 import * as THREE from 'three'
 import { GLTFExporter, OBJExporter, STLExporter } from 'three-stdlib'
 import type { SceneGraph } from '../../../shared/types/scene'
+import { loadCsg, sceneNeedsCsg } from '../geometry/evaluateBoolean'
 import { buildSceneGroup, disposeSceneGroup } from './buildSceneGroup'
 
 export type ExportFormat = 'glb' | 'obj' | 'stl'
@@ -39,7 +40,9 @@ export async function exportScene(
   format: ExportFormat,
   name = 'archstudio-model',
 ): Promise<void> {
-  const group = buildSceneGroup(scene)
+  // Pay the CSG chunk cost only when the model actually contains a boolean (E2 / D-019).
+  const csg = sceneNeedsCsg(scene) ? await loadCsg() : undefined
+  const group = buildSceneGroup(scene, csg)
   try {
     if (format === 'glb') {
       const buffer = await exportGLB(group)

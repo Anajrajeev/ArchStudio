@@ -34,6 +34,7 @@ const TOOL_KEYS: Record<string, Tool> = {
   l: 'leader',
   y: 'columngrid',
   u: 'roof',
+  v: 'primitive',
 }
 
 export default function App() {

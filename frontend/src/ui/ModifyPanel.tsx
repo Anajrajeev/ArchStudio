@@ -27,6 +27,13 @@ import {
   type TransformResult,
 } from '../editor/transforms'
 import { alignElements, type AlignAxis, type AlignEdge } from '../editor/modifyVerbs'
+import {
+  cutElements,
+  explodeBoolean,
+  intersectElements,
+  unionElements,
+} from '../editor/booleanVerbs'
+import { validateOperands } from '../../../shared/geometry/booleanTree'
 import { selectionCentroid } from '../editor/selection'
 import type { SceneGraph, Vec2 } from '../../../shared/types/scene'
 
@@ -86,6 +93,14 @@ export default function ModifyPanel() {
 
   const delta = (): Vec2 => [dx, dy]
   const centre = (): Vec2 => [cx, cy]
+
+  // `validateOperands` is the single source of truth for whether a boolean is possible, so the
+  // buttons appear exactly when the verb would succeed — no second, drifting copy of the rule.
+  const booleanReady = validateOperands(scene, selectedIds) === null
+  const explodableId =
+    selectedIds.length === 1 && scene.booleans.some((b) => b.id === selectedIds[0])
+      ? selectedIds[0]
+      : null
 
   return (
     <>
@@ -176,6 +191,46 @@ export default function ModifyPanel() {
           {t('modify.radialArray')}
         </button>
       </Actions>
+
+      {/* Booleans (B7). Shown only when the selection could actually be combined, so the panel
+          does not offer an operation that is guaranteed to refuse. Order matters for Cut: the
+          FIRST selected shape is the base and the rest are removed from it. */}
+      {booleanReady && (
+        <>
+          <Group label={t('modify.boolean')}>
+            <span className="prop-label" style={{ gridColumn: '1 / -1', opacity: 0.7 }}>
+              {t('modify.booleanHint')}
+            </span>
+          </Group>
+          <Actions>
+            <button className="btn" onClick={() => run(() => unionElements(scene, selectedIds))}>
+              {t('modify.union')}
+            </button>
+            <button className="btn" onClick={() => run(() => cutElements(scene, selectedIds))}>
+              {t('modify.cut')}
+            </button>
+            <button
+              className="btn"
+              onClick={() => run(() => intersectElements(scene, selectedIds))}
+            >
+              {t('modify.intersect')}
+            </button>
+          </Actions>
+        </>
+      )}
+
+      {/* Explode is the inverse: it gives the operands back rather than deleting them. */}
+      {explodableId && (
+        <Actions>
+          <button
+            className="btn"
+            style={{ width: '100%' }}
+            onClick={() => run(() => explodeBoolean(scene, explodableId))}
+          >
+            {t('modify.explode')}
+          </button>
+        </Actions>
+      )}
 
       {/* Align needs two or more elements to mean anything. */}
       {selectedIds.length > 1 && (

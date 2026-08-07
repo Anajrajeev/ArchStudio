@@ -13,7 +13,7 @@
 export type Vec2 = [number, number]
 export type Vec3 = [number, number, number]
 
-export const SCHEMA_VERSION = 5 as const
+export const SCHEMA_VERSION = 6 as const
 
 // ---------------------------------------------------------------------------
 // Materials
@@ -51,6 +51,7 @@ export type TypeCategory =
   | 'beam'
   | 'furniture'
   | 'roof'
+  | 'primitive'
 
 export interface WallTypeDef {
   id: string
@@ -136,6 +137,48 @@ export interface RoofTypeDef {
   layers: MaterialLayer[]
 }
 
+/**
+ * A parametric primitive solid (B7). Every variant is closed-form: `shared/geometry/primitives.ts`
+ * tessellates it to a watertight indexed mesh and computes its volume analytically. Segment counts
+ * are stored rather than fixed so a boolean operand can be refined without changing the schema.
+ */
+export type PrimitiveShape =
+  | { kind: 'box'; width: number; depth: number; height: number }
+  | { kind: 'cylinder'; radius: number; height: number; segments: number }
+  | { kind: 'cone'; radius: number; height: number; segments: number }
+  | { kind: 'sphere'; radius: number; segments: number }
+  /** A regular N-gon extruded vertically. `sides` >= 3. */
+  | { kind: 'prism'; radius: number; height: number; sides: number }
+  /** A right triangular wedge: full height at -depth/2, zero height at +depth/2. */
+  | { kind: 'wedge'; width: number; depth: number; height: number }
+  | {
+      kind: 'torus'
+      radius: number
+      tubeRadius: number
+      radialSegments: number
+      tubularSegments: number
+    }
+
+export type PrimitiveKind = PrimitiveShape['kind']
+
+export const PRIMITIVE_KINDS = [
+  'box',
+  'cylinder',
+  'cone',
+  'sphere',
+  'prism',
+  'wedge',
+  'torus',
+] as const
+
+export interface PrimitiveTypeDef {
+  id: string
+  category: 'primitive'
+  name: string
+  shape: PrimitiveShape
+  material: string
+}
+
 export type ElementTypeDef =
   | WallTypeDef
   | DoorTypeDef
@@ -145,6 +188,7 @@ export type ElementTypeDef =
   | BeamTypeDef
   | FurnitureTypeDef
   | RoofTypeDef
+  | PrimitiveTypeDef
 
 // ---------------------------------------------------------------------------
 // Levels
@@ -298,6 +342,47 @@ export interface Roof {
   edges: RoofEdge[]
   /** Elevation of the eave (footprint) above the level. */
   baseHeight: number
+}
+
+// ---------------------------------------------------------------------------
+// Primitive solids and boolean trees (B7 — see DECISIONS.md D-019)
+// ---------------------------------------------------------------------------
+
+/**
+ * A placed primitive solid. Shape lives on the TYPE (edit the type, every instance updates, per
+ * D-009); placement and per-instance scale live here, mirroring `Column`/`FurnitureItem`.
+ */
+export interface Primitive {
+  id: string
+  typeId: string
+  levelId: string
+  position: Vec2
+  /** Elevation of the primitive's BASE above its level. */
+  heightOffset: number
+  /** Rotation about the vertical axis, degrees. */
+  rotation: number
+  /** Uniform per-instance scale. */
+  scale: number
+}
+
+export type BooleanOp = 'union' | 'cut' | 'intersect'
+
+/**
+ * One node of a boolean tree. Operands are element ids and may themselves be `BooleanNode`s, which
+ * is what makes this a tree rather than a flat pairing.
+ *
+ * The TREE is stored; the evaluated mesh never is (D-019). Evaluation is derived on demand, so a
+ * boolean stays editable and re-resolves when its operands move.
+ *
+ * Order is significant for `cut`: `operandIds[0]` is the base solid and every later operand is
+ * removed from it. `union` and `intersect` are order-independent but keep the same field so one
+ * shape covers all three ops.
+ */
+export interface BooleanNode {
+  id: string
+  levelId: string
+  op: BooleanOp
+  operandIds: string[]
 }
 
 // ---------------------------------------------------------------------------
@@ -479,6 +564,8 @@ export interface SceneGraph {
   roomTags: RoomTag[]
   columnGrids: ColumnGrid[]
   roofs: Roof[]
+  primitives: Primitive[]
+  booleans: BooleanNode[]
 }
 
 /** Every collection key that holds scene elements (BIM model objects). */
@@ -493,6 +580,8 @@ export const ELEMENT_COLLECTIONS = [
   'furniture',
   'columnGrids',
   'roofs',
+  'primitives',
+  'booleans',
 ] as const
 
 export type ElementCollection = (typeof ELEMENT_COLLECTIONS)[number]
@@ -605,6 +694,57 @@ export const DEFAULT_TYPES: ElementTypeDef[] = [
       { material: 'mat-timber', thickness: 0.23, function: 'structure' },
     ],
   },
+  // One default type per primitive shape (B7), so the tool's type selector is populated on a
+  // fresh project and every shape is reachable without authoring a type first.
+  {
+    id: 'pt-box',
+    category: 'primitive',
+    name: 'Box — 1×1×1',
+    shape: { kind: 'box', width: 1, depth: 1, height: 1 },
+    material: 'mat-concrete',
+  },
+  {
+    id: 'pt-cylinder',
+    category: 'primitive',
+    name: 'Cylinder — ⌀1 × 1',
+    shape: { kind: 'cylinder', radius: 0.5, height: 1, segments: 32 },
+    material: 'mat-concrete',
+  },
+  {
+    id: 'pt-cone',
+    category: 'primitive',
+    name: 'Cone — ⌀1 × 1',
+    shape: { kind: 'cone', radius: 0.5, height: 1, segments: 32 },
+    material: 'mat-concrete',
+  },
+  {
+    id: 'pt-sphere',
+    category: 'primitive',
+    name: 'Sphere — ⌀1',
+    shape: { kind: 'sphere', radius: 0.5, segments: 24 },
+    material: 'mat-concrete',
+  },
+  {
+    id: 'pt-prism',
+    category: 'primitive',
+    name: 'Prism — hexagonal',
+    shape: { kind: 'prism', radius: 0.5, height: 1, sides: 6 },
+    material: 'mat-concrete',
+  },
+  {
+    id: 'pt-wedge',
+    category: 'primitive',
+    name: 'Wedge — 1×1×1',
+    shape: { kind: 'wedge', width: 1, depth: 1, height: 1 },
+    material: 'mat-concrete',
+  },
+  {
+    id: 'pt-torus',
+    category: 'primitive',
+    name: 'Torus — ⌀1 tube 0.2',
+    shape: { kind: 'torus', radius: 0.5, tubeRadius: 0.2, radialSegments: 16, tubularSegments: 32 },
+    material: 'mat-steel',
+  },
 ]
 
 export function emptySceneGraph(projectId: string): SceneGraph {
@@ -629,6 +769,8 @@ export function emptySceneGraph(projectId: string): SceneGraph {
     roomTags: [],
     columnGrids: [],
     roofs: [],
+    primitives: [],
+    booleans: [],
   }
 }
 
@@ -653,6 +795,14 @@ export function findSlabType(scene: SceneGraph, typeId: string): SlabTypeDef | u
 export function findRoofType(scene: SceneGraph, typeId: string): RoofTypeDef | undefined {
   const t = findType(scene, typeId)
   return t?.category === 'roof' ? t : undefined
+}
+
+export function findPrimitiveType(
+  scene: SceneGraph,
+  typeId: string,
+): PrimitiveTypeDef | undefined {
+  const t = findType(scene, typeId)
+  return t?.category === 'primitive' ? t : undefined
 }
 
 export function findLevel(scene: SceneGraph, levelId: string): Level | undefined {

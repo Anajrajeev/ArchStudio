@@ -33,8 +33,12 @@ import { refFromPoint, resolveDimension } from '../../../shared/geometry/dimensi
 import { defaultRoomTag } from '../../../shared/geometry/annotations'
 import { defaultColumnGrid } from '../../../shared/geometry/columnGrid'
 import { pointInPolygon } from '../../../shared/geometry/index'
+import { cutElements, unionElements } from '../editor/booleanVerbs'
+import { isVerbError } from '../editor/verbResult'
+import { freePrimitives } from '../../../shared/geometry/booleanTree'
 import {
   addDimension,
+  deleteElement,
   updateWall,
   addAnnotation,
   addRoomTag,
@@ -967,5 +971,108 @@ describe('snapping inside a real gesture', () => {
     expect(walls).toHaveLength(2)
     expect(walls[1].baseline.start[0]).toBeCloseTo(4, 6)
     expect(walls[1].baseline.start[1]).toBeCloseTo(0, 6)
+  })
+})
+
+describe('primitive gesture (B7)', () => {
+  it('a single click places the active primitive type on the work plane', () => {
+    pickTool('primitive')
+    click(...px(2, 3))
+
+    const s = useEditor.getState()
+    expect(s.scene.primitives).toHaveLength(1)
+    const p = s.scene.primitives[0]
+    expect(p.position[0]).toBeCloseTo(2, 4)
+    expect(p.position[1]).toBeCloseTo(3, 4)
+    expect(p.typeId).toBe('pt-box')
+    expect(p.heightOffset).toBe(0)
+    expect(p.scale).toBe(1)
+  })
+
+  it('places the type chosen in the ribbon, not always a box', () => {
+    useEditor.getState().setActiveType('primitive', 'pt-cylinder')
+    pickTool('primitive')
+    click(...px(0, 0))
+    expect(useEditor.getState().scene.primitives[0].typeId).toBe('pt-cylinder')
+  })
+
+  it('each click places another solid — the tool does not need re-picking', () => {
+    pickTool('primitive')
+    click(...px(0, 0))
+    click(...px(2, 0))
+    click(...px(4, 0))
+    expect(useEditor.getState().scene.primitives).toHaveLength(3)
+  })
+
+  it('is one undo entry per solid', () => {
+    const before = useEditor.getState().undoStack.length
+    pickTool('primitive')
+    click(...px(1, 1))
+    expect(useEditor.getState().undoStack.length).toBe(before + 1)
+    useEditor.getState().undo()
+    expect(useEditor.getState().scene.primitives).toHaveLength(0)
+  })
+})
+
+describe('boolean verbs from a real selection (B7)', () => {
+  /** Place two overlapping solids by clicking, exactly as a user would. */
+  function placeTwo(): [string, string] {
+    pickTool('primitive')
+    click(...px(0, 0))
+    click(...px(0.5, 0.5))
+    const ids = useEditor.getState().scene.primitives.map((p) => p.id)
+    expect(ids).toHaveLength(2)
+    return [ids[0], ids[1]]
+  }
+
+  it('cutting two placed solids consumes them into one boolean result', () => {
+    const [a, b] = placeTwo()
+    const s = useEditor.getState()
+    s.setTool('select')
+    s.selectMany([a, b])
+
+    const result = cutElements(useEditor.getState().scene, [a, b])
+    if (isVerbError(result)) throw new Error(result.error)
+    s.commit(result.label, () => result.scene)
+    s.selectMany(result.selectAfter)
+
+    const after = useEditor.getState()
+    expect(after.scene.booleans).toHaveLength(1)
+    expect(after.scene.primitives).toHaveLength(2) // operands are kept, just absorbed
+    expect(freePrimitives(after.scene)).toHaveLength(0)
+    expect(after.selectedIds).toEqual([after.scene.booleans[0].id])
+  })
+
+  it('undo restores the two separate solids in one step', () => {
+    const [a, b] = placeTwo()
+    const s = useEditor.getState()
+    const result = unionElements(s.scene, [a, b])
+    if (isVerbError(result)) throw new Error(result.error)
+    s.commit(result.label, () => result.scene)
+
+    useEditor.getState().undo()
+    const after = useEditor.getState()
+    expect(after.scene.booleans).toHaveLength(0)
+    expect(freePrimitives(after.scene)).toHaveLength(2)
+  })
+
+  it('deleting a placed solid repairs the boolean rather than corrupting it', () => {
+    const [a, b] = placeTwo()
+    const s = useEditor.getState()
+    const result = unionElements(s.scene, [a, b])
+    if (isVerbError(result)) throw new Error(result.error)
+    s.commit(result.label, () => result.scene)
+
+    s.commit('Delete element', (sc) => deleteElement(sc, b))
+    const after = useEditor.getState()
+    // One operand left is not a union, so the node goes and the survivor renders on its own.
+    expect(after.scene.booleans).toHaveLength(0)
+    expect(after.scene.primitives.map((p) => p.id)).toEqual([a])
+  })
+
+  it('refuses a single-element selection with a message rather than doing nothing', () => {
+    const [a] = placeTwo()
+    const result = unionElements(useEditor.getState().scene, [a])
+    expect(isVerbError(result)).toBe(true)
   })
 })

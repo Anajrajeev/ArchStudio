@@ -15,9 +15,16 @@ import {
   assemblyThickness,
   findType,
   findLevel,
+  findPrimitiveType,
   type SceneGraph,
   type TopConstraint,
+  type BooleanOp,
 } from '../../../shared/types/scene'
+import {
+  resolveBooleanNode,
+  isBooleanTreeError,
+} from '../../../shared/geometry/booleanTree'
+import { primitiveErrorMessage } from '../viewport/Primitives'
 import {
   resolveWall,
   baselineLength,
@@ -53,6 +60,8 @@ import {
   removeLastGridAxis,
   updateRoof,
   setRoofUniformEdge,
+  updatePrimitive,
+  updateBooleanNode,
 } from '../scene/mutations'
 import { resolveRoof, isRoofError } from '../../../shared/geometry/roof'
 import { IconTrash, IconPlus } from './Icons'
@@ -139,6 +148,8 @@ export default function PropertiesPanel() {
           {single.kind === 'dimension' && <DimensionProps id={single.id} />}
           {single.kind === 'columnGrid' && <ColumnGridProps id={single.id} />}
           {single.kind === 'roof' && <RoofProps id={single.id} />}
+          {single.kind === 'primitive' && <PrimitiveProps id={single.id} />}
+          {single.kind === 'boolean' && <BooleanProps id={single.id} />}
 
           <div style={{ padding: 'var(--sp-8)' }}>
             <button
@@ -941,6 +952,252 @@ function RoofProps({ id }: { id: string }) {
       {isRoofError(resolved) && (
         <p style={{ color: 'var(--status-error)', fontSize: 'var(--fs-label)', padding: '0 var(--sp-8)' }}>
           {t('properties.roofError')}: {resolved.error}
+        </p>
+      )}
+    </>
+  )
+}
+
+/**
+ * Primitive solid (B7). Shape parameters live on the TYPE, so editing them updates every instance
+ * of that type — the defining BIM interaction (D-009). That is flagged in the UI rather than left
+ * as a surprise, the same way the wall-thickness handle is (D1).
+ */
+function PrimitiveProps({ id }: { id: string }) {
+  const { t } = useTranslation()
+  const scene = useEditor((s) => s.scene)
+  const commit = useEditor((s) => s.commit)
+  const primitive = scene.primitives.find((p) => p.id === id)
+  if (!primitive) return null
+  const type = findPrimitiveType(scene, primitive.typeId)
+  const error = primitiveErrorMessage(scene, id)
+
+  /** Patch one field of the type's shape, preserving its discriminant. */
+  const setShape = (patch: Record<string, number>) => {
+    if (!type) return
+    commit('Set shape', (s) =>
+      updateType(s, type.id, { shape: { ...type.shape, ...patch } }),
+    )
+  }
+
+  const shape = type?.shape
+
+  return (
+    <>
+      {shape && (
+        <Group label={`${t('properties.typeGroup')} — ${t('properties.primitiveShape')}`}>
+          <span className="prop-label" style={{ gridColumn: '1 / -1', opacity: 0.7 }}>
+            {t('properties.sharedHint')}
+          </span>
+          {(shape.kind === 'box' || shape.kind === 'wedge') && (
+            <>
+              <NumberField
+                label={t('properties.width')}
+                value={shape.width}
+                min={0.001}
+                onCommit={(v) => setShape({ width: v })}
+              />
+              <NumberField
+                label={t('properties.depth')}
+                value={shape.depth}
+                min={0.001}
+                onCommit={(v) => setShape({ depth: v })}
+              />
+              <NumberField
+                label={t('properties.height')}
+                value={shape.height}
+                min={0.001}
+                onCommit={(v) => setShape({ height: v })}
+              />
+            </>
+          )}
+          {(shape.kind === 'cylinder' || shape.kind === 'cone') && (
+            <>
+              <NumberField
+                label={t('properties.radius')}
+                value={shape.radius}
+                min={0.001}
+                onCommit={(v) => setShape({ radius: v })}
+              />
+              <NumberField
+                label={t('properties.height')}
+                value={shape.height}
+                min={0.001}
+                onCommit={(v) => setShape({ height: v })}
+              />
+              <NumberField
+                label={t('properties.segments')}
+                value={shape.segments}
+                min={3}
+                max={256}
+                step={1}
+                onCommit={(v) => setShape({ segments: Math.round(v) })}
+              />
+            </>
+          )}
+          {shape.kind === 'sphere' && (
+            <>
+              <NumberField
+                label={t('properties.radius')}
+                value={shape.radius}
+                min={0.001}
+                onCommit={(v) => setShape({ radius: v })}
+              />
+              <NumberField
+                label={t('properties.segments')}
+                value={shape.segments}
+                min={4}
+                max={256}
+                step={1}
+                onCommit={(v) => setShape({ segments: Math.round(v) })}
+              />
+            </>
+          )}
+          {shape.kind === 'prism' && (
+            <>
+              <NumberField
+                label={t('properties.radius')}
+                value={shape.radius}
+                min={0.001}
+                onCommit={(v) => setShape({ radius: v })}
+              />
+              <NumberField
+                label={t('properties.height')}
+                value={shape.height}
+                min={0.001}
+                onCommit={(v) => setShape({ height: v })}
+              />
+              <NumberField
+                label={t('properties.sides')}
+                value={shape.sides}
+                min={3}
+                max={256}
+                step={1}
+                onCommit={(v) => setShape({ sides: Math.round(v) })}
+              />
+            </>
+          )}
+          {shape.kind === 'torus' && (
+            <>
+              <NumberField
+                label={t('properties.radius')}
+                value={shape.radius}
+                min={0.001}
+                onCommit={(v) => setShape({ radius: v })}
+              />
+              <NumberField
+                label={t('properties.tubeRadius')}
+                value={shape.tubeRadius}
+                min={0.001}
+                onCommit={(v) => setShape({ tubeRadius: v })}
+              />
+              <NumberField
+                label={t('properties.radialSegments')}
+                value={shape.radialSegments}
+                min={3}
+                max={256}
+                step={1}
+                onCommit={(v) => setShape({ radialSegments: Math.round(v) })}
+              />
+              <NumberField
+                label={t('properties.tubularSegments')}
+                value={shape.tubularSegments}
+                min={3}
+                max={256}
+                step={1}
+                onCommit={(v) => setShape({ tubularSegments: Math.round(v) })}
+              />
+            </>
+          )}
+        </Group>
+      )}
+
+      <Group label={t('properties.instanceGroup')}>
+        <NumberField
+          label={t('properties.heightOffset')}
+          value={primitive.heightOffset}
+          step={0.05}
+          onCommit={(v) =>
+            commit('Set shape elevation', (s) => updatePrimitive(s, id, { heightOffset: v }))
+          }
+        />
+        <NumberField
+          label={t('properties.rotation')}
+          value={primitive.rotation}
+          step={5}
+          unit="°"
+          onCommit={(v) => commit('Rotate shape', (s) => updatePrimitive(s, id, { rotation: v }))}
+        />
+        <NumberField
+          label={t('properties.scale')}
+          value={primitive.scale}
+          min={0.001}
+          step={0.1}
+          onCommit={(v) => commit('Scale shape', (s) => updatePrimitive(s, id, { scale: v }))}
+        />
+      </Group>
+
+      {error && (
+        <p
+          style={{
+            color: 'var(--status-error)',
+            fontSize: 'var(--fs-label)',
+            padding: '0 var(--sp-8)',
+          }}
+        >
+          {t('properties.primitiveError')}: {error}
+        </p>
+      )}
+    </>
+  )
+}
+
+/**
+ * A boolean result. The operation is editable in place — switching a cut to a union re-evaluates
+ * from the same stored tree, which is the whole reason the tree rather than the mesh is what the
+ * scene graph holds (D-019). The operands are listed read-only; they are changed by exploding and
+ * re-combining, which keeps the tree edit paths down to one.
+ */
+function BooleanProps({ id }: { id: string }) {
+  const { t } = useTranslation()
+  const scene = useEditor((s) => s.scene)
+  const commit = useEditor((s) => s.commit)
+  const node = scene.booleans.find((b) => b.id === id)
+  if (!node) return null
+  const resolved = resolveBooleanNode(scene, id)
+
+  return (
+    <>
+      <Group label={t('properties.instanceGroup')}>
+        <label className="prop-label" htmlFor="boolean-op">
+          {t('properties.booleanOp')}
+        </label>
+        <select
+          id="boolean-op"
+          className="select"
+          value={node.op}
+          onChange={(e) =>
+            commit('Set boolean operation', (s) =>
+              updateBooleanNode(s, id, { op: e.target.value as BooleanOp }),
+            )
+          }
+        >
+          <option value="union">{t('properties.booleanUnion')}</option>
+          <option value="cut">{t('properties.booleanCut')}</option>
+          <option value="intersect">{t('properties.booleanIntersect')}</option>
+        </select>
+        <span className="prop-label">{t('properties.booleanOperands')}</span>
+        <span className="prop-value">{node.operandIds.length}</span>
+      </Group>
+      {isBooleanTreeError(resolved) && (
+        <p
+          style={{
+            color: 'var(--status-error)',
+            fontSize: 'var(--fs-label)',
+            padding: '0 var(--sp-8)',
+          }}
+        >
+          {t('properties.booleanError')}: {resolved.error}
         </p>
       )}
     </>

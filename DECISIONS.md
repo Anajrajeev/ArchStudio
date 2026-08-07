@@ -317,3 +317,77 @@ high to rush a sweep algorithm with split/collapse events without dedicated time
 properly against concave and degenerate inputs.
 
 ---
+
+## D-019 — Boolean geometry: the tree is parametric and pure, the *evaluation* is three-bvh-csg (Phase 1B-ii, D2)
+
+**Decision:** Three separate commitments, deliberately kept apart:
+
+1. **Primitives are pure parametric data.** `shared/geometry/primitives.ts` tessellates each of the
+   seven shapes (box, cylinder, cone, sphere, prism, wedge, torus) to an indexed `TriMesh`
+   (`{positions, indices}`) in plain TypeScript with **no Three.js import**, alongside closed-form
+   `primitiveVolume` / `primitiveBounds`. `shared/geometry/` stays entirely three-free, as it is
+   today.
+2. **The boolean TREE is the source of truth, never the evaluated mesh.** A `BooleanNode`
+   (`{op, operandIds}`) stores *which* elements combine and *how*; operands may be primitives or
+   other boolean nodes, so it is a genuine tree. Evaluated triangle soup is never written to the
+   scene graph — it is derived, exactly like wall boxes are. This is what keeps a boolean editable,
+   undoable and re-resolvable after its operands move.
+3. **Evaluation uses `three-bvh-csg`, pinned at `0.0.17`.** One module,
+   `frontend/src/geometry/evaluateBoolean.ts`, is the only place that turns a boolean tree into a
+   `BufferGeometry`, and **both** the viewport renderer and `export/buildSceneGroup.ts` call it —
+   so the screen and the GLB/OBJ/STL cannot disagree, which is the whole point of the one-geometry
+   rule.
+
+**Reasoning:** The version pin is load-bearing and not arbitrary: `three-bvh-csg@0.0.18` peers
+`three >= 0.179`, but this repo is on `three@0.167`; `0.0.17` peers `three >= 0.151` and works
+today, so booleans do not drag a Three.js major upgrade (and an r3f 8.x / drei 9.x compatibility
+sweep) into this pass. It was verified before any code was written, not assumed: subtracting a 1 m
+cube from a 2 m cube yields volume **7.000000**, intersection **1.000000**, union **8.000000** —
+exact to six decimals, running in plain Node with no WebGL context. That last property matters as
+much as the accuracy: `three-bvh-csg` is CPU-only, so boolean correctness is genuinely unit-testable
+in vitest rather than something we assert by looking at a screenshot.
+
+**Why not build it ourselves:** a robust CSG kernel is precisely the "general-purpose CAD kernel"
+the core rule forbids. Coplanar-face handling and numerical robustness are where these algorithms
+actually fail, and they take far longer to get right than the rest of B7 combined.
+
+**Lazy-loaded, because E2 is already over budget.** `three-bvh-csg` + `three-mesh-bvh` are ~2.3 MB
+unpacked, and the bundle already exceeds Vite's 500 KB warning. So the CSG module is reached through
+a cached `loadCsg()` dynamic import, and a scene containing no boolean node never loads a byte of
+it. `buildSceneGroup` stays **synchronous** and takes the loaded module as an optional argument —
+`exportScene` awaits the load only when `scene.booleans.length > 0`. Making the builder async would
+have rippled through its existing callers and tests for no gain.
+
+**Alternatives considered:**
+
+- **`three-csg-ts`** (a csg.js BSP-tree port). Lighter and dependency-free, but BSP CSG's well-known
+  failure mode is exactly our most common case — coplanar faces, as produced by cutting a box from a
+  box — and it degrades badly with triangle count. Rejected: silently-wrong geometry is the one
+  outcome AGENTS.md rules out.
+- **Write a CSG kernel in pure TS** so `shared/geometry/` could own booleans end to end. Rejected
+  against the core rule, as above. The purity is preserved where it is cheap (primitives, tree
+  resolution, validation) and given up only for the one operation that genuinely needs a kernel.
+- **Defer booleans entirely to the Phase 6 OpenCascade export service** (the D-005 stance). Rejected
+  because D-005's reasoning was specific to *axis-aligned rectangular openings*, where box
+  decomposition is strictly better. It does not extend to arbitrary primitive-on-primitive cuts,
+  which have no cheap deterministic decomposition.
+
+**Consequences:**
+
+- **D-005 is unchanged.** Wall openings still use box decomposition. Two mechanisms coexist on
+  purpose: box decomposition where the cut is rectilinear and analytic, CSG where it is not.
+- **Exact BRep booleans stay deferred to Phase 6.** `three-bvh-csg` is a *triangle-mesh* evaluator,
+  so results are tessellated, not analytic. This is fine for GLB/OBJ/STL, and is not fine for
+  STEP/IGES — that path still goes through OpenCascade, via the same stored boolean tree.
+- **Operands are consumed, not duplicated.** An element referenced by a boolean node is skipped by
+  the ordinary renderers (`consumedElementIds`), otherwise the uncut original would draw on top of
+  the cut result. Deleting a node releases its operands back to visibility rather than destroying
+  them.
+- **Tree validation refuses rather than guesses**: cycles, missing operands, fewer than two
+  operands, and non-solid operands each produce a message, per the refuse-and-explain rule.
+
+**Also fixed in this pass:** `buildSceneGroup` never emitted **roofs**, so the viewport drew a roof
+that no export contained — a pre-existing violation of the one-geometry rule (B1/D-018 landed the
+renderer but not the export path). Roofs now export from the same `resolveRoof` the viewport uses.
+
+---

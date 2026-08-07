@@ -27,7 +27,12 @@ import {
   IconWindow,
   IconColumn,
   IconBeam,
+  IconRoof,
+  IconColumnGrid,
+  IconPrimitive,
+  IconBoolean,
 } from './Icons'
+import { freePrimitives, rootBooleanNodes } from '../../../shared/geometry/booleanTree'
 
 export default function LeftPanel() {
   return (
@@ -276,6 +281,10 @@ const KIND_ICON: Partial<Record<ElementKind, React.ReactNode>> = {
   room: <IconRoom />,
   column: <IconColumn />,
   beam: <IconBeam />,
+  roof: <IconRoof />,
+  columnGrid: <IconColumnGrid />,
+  primitive: <IconPrimitive />,
+  boolean: <IconBoolean />,
 }
 
 function ModelTreeSection() {
@@ -330,6 +339,38 @@ function ModelTreeSection() {
         label: t('tree.beams'),
         kind: 'beam' as ElementKind,
         ids: scene.beams.filter((b) => b.levelId === activeLevelId).map((b) => b.id),
+      },
+      // Roofs and column grids were missing from the tree even though B1/B6 shipped their
+      // renderers, so they could be drawn but never selected from here.
+      {
+        key: 'roofs',
+        label: t('tree.roofs'),
+        kind: 'roof' as ElementKind,
+        ids: scene.roofs.filter((r) => r.levelId === activeLevelId).map((r) => r.id),
+      },
+      {
+        key: 'columnGrids',
+        label: t('tree.columnGrids'),
+        kind: 'columnGrid' as ElementKind,
+        ids: scene.columnGrids.filter((g) => g.levelId === activeLevelId).map((g) => g.id),
+      },
+      // Primitives (B7). Only the FREE ones — a primitive consumed by a boolean is listed under
+      // that boolean's result, not twice, matching what the viewport actually draws.
+      {
+        key: 'primitives',
+        label: t('tree.primitives'),
+        kind: 'primitive' as ElementKind,
+        ids: freePrimitives(scene)
+          .filter((p) => p.levelId === activeLevelId)
+          .map((p) => p.id),
+      },
+      {
+        key: 'booleans',
+        label: t('tree.booleans'),
+        kind: 'boolean' as ElementKind,
+        ids: rootBooleanNodes(scene)
+          .filter((b) => b.levelId === activeLevelId)
+          .map((b) => b.id),
       },
     ].filter((g) => g.ids.length > 0)
   }, [scene, activeLevelId, t])
