@@ -15,12 +15,14 @@ import {
   columnSolid,
   beamSolid,
   wallSolidBoxes,
+  boxToTriMesh,
   polygonArea,
   baselinePointAt,
   rotationYFor,
   profileExtents,
   type Box3D,
 } from '../../../shared/geometry/index'
+import { triMeshToGeometry } from '../scene/geometryUtils'
 import {
   findType,
   findLevel,
@@ -119,14 +121,56 @@ function WallMesh({ wallId, opts }: { wallId: string; opts: RenderOpts }) {
       // Ghosted levels must not steal picks from the active level.
       raycast={ghost ? () => null : undefined}
     >
-      {boxes.map((box, i) => (
-        <mesh key={i} position={box.center} rotation={[0, box.rotationY, 0]} castShadow receiveShadow>
-          <boxGeometry args={box.size} />
-          <meshStandardMaterial {...surfaceProps(color, selected, hovered, ghost, theme)} />
-          <OutlineIf show={selected && !ghost} color={theme.select} />
-        </mesh>
-      ))}
+      {boxes.map((box, i) =>
+        box.topRamp ? (
+          // Wall voiding (B1): a chunk cut to a roof plane has a sloped top, which a plain
+          // BoxGeometry cannot express — build it from the same corners boxCorners() gives every
+          // other consumer (box-select, the exporter), so this can never disagree with them.
+          <RampedBoxMesh
+            key={i}
+            box={box}
+            color={color}
+            selected={selected}
+            hovered={hovered}
+            ghost={ghost}
+            theme={theme}
+          />
+        ) : (
+          <mesh key={i} position={box.center} rotation={[0, box.rotationY, 0]} castShadow receiveShadow>
+            <boxGeometry args={box.size} />
+            <meshStandardMaterial {...surfaceProps(color, selected, hovered, ghost, theme)} />
+            <OutlineIf show={selected && !ghost} color={theme.select} />
+          </mesh>
+        ),
+      )}
     </group>
+  )
+}
+
+function RampedBoxMesh({
+  box,
+  color,
+  selected,
+  hovered,
+  ghost,
+  theme,
+}: {
+  box: Box3D
+  color: string
+  selected: boolean
+  hovered: boolean
+  ghost: boolean
+  theme: CanvasTheme
+}) {
+  // boxCorners() already bakes in this box's world position and rotation (unlike boxGeometry,
+  // which relies on the mesh's own position/rotation props), so this mesh sets neither.
+  const geom = useMemo(() => triMeshToGeometry(boxToTriMesh(box)), [box])
+  useEffect(() => () => geom.dispose(), [geom])
+  return (
+    <mesh geometry={geom} castShadow receiveShadow>
+      <meshStandardMaterial {...surfaceProps(color, selected, hovered, ghost, theme)} />
+      <OutlineIf show={selected && !ghost} color={theme.select} />
+    </mesh>
   )
 }
 

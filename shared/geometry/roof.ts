@@ -10,8 +10,8 @@
  * `Roof.edges[]` still stores one entry per footprint edge (matching the eventual general shape),
  * but this module requires them to all agree and reads only `edges[0].angle`.
  */
-import type { Roof, Vec2, Vec3 } from '../types/scene'
-import { polygonArea } from './index'
+import type { Baseline, Roof, Vec2, Vec3 } from '../types/scene'
+import { direction, lerp2, perpendicular, polygonArea, polygonCentroid } from './index'
 
 const EPS = 1e-6
 
@@ -284,6 +284,105 @@ export function resolveRoof(roof: Roof): ResolvedRoof | RoofError {
   }
 
   return { faces, ridgeHeight: base + rise, ridge }
+}
+
+// ---------------------------------------------------------------------------
+// Wall voiding (B1) — see DECISIONS.md D-020
+// ---------------------------------------------------------------------------
+
+/** A wall is considered "on" a footprint edge within this distance (1 cm). */
+const COLLINEAR_TOLERANCE = 0.01
+
+/** Perpendicular distance from a point to the infinite line through `a`,`b`. */
+function distanceToLine(p: Vec2, a: Vec2, b: Vec2): number {
+  const d = direction(a, b)
+  const apx = p[0] - a[0]
+  const apy = p[1] - a[1]
+  return Math.abs(apx * d[1] - apy * d[0])
+}
+
+/**
+ * Which footprint edge (if any) a wall's centreline lies on, within `COLLINEAR_TOLERANCE`. Wall
+ * voiding only supports this case — a wall directly under one eave line — and refuses anything
+ * else, the same "refuse rather than guess" rule the rest of this module already follows.
+ */
+function collinearFootprintEdge(footprint: Vec2[], start: Vec2, end: Vec2): number | null {
+  for (let i = 0; i < footprint.length; i++) {
+    const a = footprint[i]
+    const b = footprint[(i + 1) % footprint.length]
+    if (
+      distanceToLine(start, a, b) < COLLINEAR_TOLERANCE &&
+      distanceToLine(end, a, b) < COLLINEAR_TOLERANCE
+    ) {
+      return i
+    }
+  }
+  return null
+}
+
+export interface WallRoofRamp {
+  /** World elevation of the wall's centreline top — always `roof.baseHeight`. */
+  centerline: number
+  /** Extra elevation (world units) at the wall's local -Z (front) top edge, relative to centreline. */
+  frontDelta: number
+  /** Extra elevation at the wall's local +Z (back) top edge, relative to centreline. */
+  backDelta: number
+}
+
+/**
+ * Resolve the ramp a wall's top should follow when voided by a roof (B1).
+ *
+ * Only supports a STRAIGHT wall whose centreline is collinear with one edge of the roof's
+ * rectangular, uniform-angle footprint — the only shape `resolveRoof` itself resolves (D-018).
+ * Refuses (returns a `RoofError`) for a curved wall, or one that does not run along an eave line,
+ * rather than guessing at a slope for a wall the roof does not actually sit above.
+ *
+ * Why this reduces to a simple front/back ramp instead of sampling along the wall's length: a
+ * roof face's height is `base + v·tanA`, where `v` is the perpendicular distance INTO the roof
+ * from that edge's own eave. A wall running along the edge sits at a FIXED `v` for its whole
+ * length — only the wall's THICKNESS moves it in `v` — so the top height is constant along the
+ * run and varies linearly only across the thickness. That is exactly a wedge cross-section (the
+ * shape D-018 anticipated), not a profile that needs per-point sampling.
+ */
+export function wallRoofRamp(
+  roof: Roof,
+  centerline: Baseline,
+  thickness: number,
+): WallRoofRamp | RoofError {
+  if (centerline.kind !== 'line') {
+    return { error: 'A curved wall cannot be voided to a roof — only straight walls are supported' }
+  }
+  const resolved = resolveRoof(roof)
+  if (isRoofError(resolved)) return resolved
+
+  const edgeIndex = collinearFootprintEdge(roof.footprint, centerline.start, centerline.end)
+  if (edgeIndex === null) {
+    return {
+      error:
+        "This wall does not run along the roof's eave line — wall voiding only supports a wall directly under one footprint edge",
+    }
+  }
+
+  const angle = roof.edges[edgeIndex]?.angle ?? roof.edges[0].angle
+  const tanA = Math.tan((angle * Math.PI) / 180)
+  const halfSpan = (thickness / 2) * tanA
+
+  // Height increases moving INTO the roof (toward the ridge), i.e. toward the footprint's own
+  // centroid. Whichever of the wall's two thickness faces points that way gets the taller top.
+  // `perpendicular(direction)` is exactly the wall's local +Z ("back") direction — see
+  // `rotationYFor`/`boxCorners` in shared/geometry/index.ts — matched deliberately so this sign
+  // lines up with how `wallSolidBoxes` assembles its chunks.
+  const centroid = polygonCentroid(roof.footprint)
+  const mid = lerp2(centerline.start, centerline.end, 0.5)
+  const normal = perpendicular(direction(centerline.start, centerline.end))
+  const backTowardCentroid =
+    normal[0] * (centroid[0] - mid[0]) + normal[1] * (centroid[1] - mid[1]) >= 0
+
+  return {
+    centerline: roof.baseHeight,
+    frontDelta: backTowardCentroid ? -halfSpan : halfSpan,
+    backDelta: backTowardCentroid ? halfSpan : -halfSpan,
+  }
 }
 
 /** A sane default roof over a rectangle: 30 degrees, 0.3m overhang, sitting at the wall top. */

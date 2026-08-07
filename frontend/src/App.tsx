@@ -11,7 +11,7 @@ import Viewport from './viewport/Viewport'
 import { useEditor, type Tool } from './scene/store'
 import { deleteElement } from './scene/mutations'
 import { commitActiveTool } from './editor/commit'
-import { isLoopTool } from './editor/tools'
+import { isLoopTool, isPathTool } from './editor/tools'
 
 /** Single-key tool shortcuts, in the SketchUp/Blender style. */
 const TOOL_KEYS: Record<string, Tool> = {
@@ -35,6 +35,8 @@ const TOOL_KEYS: Record<string, Tool> = {
   y: 'columngrid',
   u: 'roof',
   v: 'primitive',
+  h: 'stair',
+  j: 'railing',
 }
 
 export default function App() {
@@ -126,6 +128,8 @@ function useKeyboardLayer(): void {
           if (s.numeric.buffer) s.commitNumeric()
           // Enter closes an in-progress loop (slab/room).
           else if (isLoopTool(s.tool) && s.points.length >= 3) commitActiveTool(s.points)
+          // Enter finishes an open path (railing, B3) — it never closes on its own.
+          else if (isPathTool(s.tool) && s.points.length >= 2) commitActiveTool(s.points)
           return
         }
         // Axis locking, with visible feedback in the status bar.

@@ -8,6 +8,8 @@
 import {
   findLevel,
   findPrimitiveType,
+  findStairType,
+  findRailingType,
   type Baseline,
   type SceneGraph,
   type Vec2,
@@ -39,7 +41,11 @@ import {
   addFilledOpening,
   addRoof,
   addPrimitive,
+  addStair,
+  addRailing,
 } from '../scene/mutations'
+import { defaultStair } from '../../../shared/geometry/stair'
+import { defaultRailing } from '../../../shared/geometry/railing'
 import { newId as generateId } from '../scene/ids'
 import { TOOL_POINTS, type EditorState, type Tool, type WallMode } from '../scene/store'
 
@@ -164,6 +170,17 @@ export function toolHint(tool: Tool, pointCount: number, wallMode: WallMode = 'l
         prompt: 'Click to place a solid — combine two with Union/Cut/Intersect in Modify',
         modifiers: 'Pick the shape in the ribbon · Esc cancel',
       }
+    case 'stair':
+      return pointCount === 0
+        ? { prompt: 'Click the stair start point', modifiers: 'Esc cancel' }
+        : { prompt: 'Click the stair end point — sets its direction', modifiers: 'Esc cancel' }
+    case 'railing':
+      return pointCount < 2
+        ? { prompt: `Click railing path points (${pointCount}/2 minimum)`, modifiers: 'Esc cancel' }
+        : {
+            prompt: 'Click more points, or press Enter to finish the path',
+            modifiers: 'Enter finish · Backspace undo point · Esc cancel',
+          }
     case 'trim':
       return { prompt: 'Click the cutting edge, then the part to KEEP', modifiers: 'Esc cancel' }
     case 'extend':
@@ -195,6 +212,14 @@ export function modifyHint(tool: Tool, hasRef: boolean): string {
 /** Does this tool close a loop (slab, room) rather than collect a fixed number of points? */
 export function isLoopTool(tool: Tool): boolean {
   return tool === 'slab' || tool === 'room' || tool === 'roof'
+}
+
+/**
+ * Does this tool collect an unbounded, OPEN path (B3)? Unlike a loop tool it never closes on the
+ * first point — a railing is a path, not a boundary — so it is finished with Enter instead.
+ */
+export function isPathTool(tool: Tool): boolean {
+  return tool === 'railing'
 }
 
 /** Modify verbs act on existing elements rather than placing points (D3). */
@@ -391,6 +416,42 @@ export function buildCommit(state: EditorState, points: Vec2[]): CommitResult | 
         },
         keepPoints: [],
         selectAfter: () => newId,
+      }
+    }
+
+    case 'stair': {
+      if (points.length < 2) return null
+      const [start, end] = points
+      if (distance(start, end) < 1e-6) return null
+      if (!findStairType(state.scene, state.activeStairTypeId)) return null
+      const level = findLevel(state.scene, activeLevelId)
+      const stair = defaultStair(
+        generateId('st'),
+        state.activeStairTypeId,
+        activeLevelId,
+        start,
+        end,
+        level?.height ?? 2.8,
+      )
+      return {
+        label: 'Add stair',
+        produce: (scene) => addStair(scene, stair),
+        keepPoints: [],
+        selectAfter: () => stair.id,
+      }
+    }
+
+    case 'railing': {
+      // An open path: 2 points minimum, and finished by Enter rather than by point count, so this
+      // only ever runs once App.tsx's Enter handler has already confirmed points.length >= 2.
+      if (points.length < 2) return null
+      if (!findRailingType(state.scene, state.activeRailingTypeId)) return null
+      const railing = defaultRailing(generateId('rl'), state.activeRailingTypeId, activeLevelId, points)
+      return {
+        label: 'Add railing',
+        produce: (scene) => addRailing(scene, railing),
+        keepPoints: [],
+        selectAfter: () => railing.id,
       }
     }
 

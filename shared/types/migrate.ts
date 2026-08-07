@@ -223,6 +223,8 @@ type V2Scene = Omit<
   | 'roofs'
   | 'primitives'
   | 'booleans'
+  | 'stairs'
+  | 'railings'
 > & { schemaVersion: 2 }
 
 // ---------------------------------------------------------------------------
@@ -232,7 +234,7 @@ type V2Scene = Omit<
 /** A v3 document is identical to v4 minus `columnGrids`. */
 type V3Scene = Omit<
   SceneGraph,
-  'schemaVersion' | 'columnGrids' | 'roofs' | 'primitives' | 'booleans'
+  'schemaVersion' | 'columnGrids' | 'roofs' | 'primitives' | 'booleans' | 'stairs' | 'railings'
 > & { schemaVersion: 3 }
 
 // ---------------------------------------------------------------------------
@@ -240,7 +242,10 @@ type V3Scene = Omit<
 // ---------------------------------------------------------------------------
 
 /** A v4 document is identical to v5 minus `roofs`. */
-type V4Scene = Omit<SceneGraph, 'schemaVersion' | 'roofs' | 'primitives' | 'booleans'> & {
+type V4Scene = Omit<
+  SceneGraph,
+  'schemaVersion' | 'roofs' | 'primitives' | 'booleans' | 'stairs' | 'railings'
+> & {
   schemaVersion: 4
 }
 
@@ -249,9 +254,16 @@ type V4Scene = Omit<SceneGraph, 'schemaVersion' | 'roofs' | 'primitives' | 'bool
 // ---------------------------------------------------------------------------
 
 /** A v5 document is identical to v6 minus `primitives` and `booleans`. */
-type V5Scene = Omit<SceneGraph, 'schemaVersion' | 'primitives' | 'booleans'> & {
+type V5Scene = Omit<SceneGraph, 'schemaVersion' | 'primitives' | 'booleans' | 'stairs' | 'railings'> & {
   schemaVersion: 5
 }
+
+// ---------------------------------------------------------------------------
+// v6 shape (frozen — do not edit; this is history)
+// ---------------------------------------------------------------------------
+
+/** A v6 document is identical to v7 minus `stairs` and `railings`. */
+type V6Scene = Omit<SceneGraph, 'schemaVersion' | 'stairs' | 'railings'> & { schemaVersion: 6 }
 
 // ---------------------------------------------------------------------------
 // v2 → v3
@@ -305,7 +317,7 @@ function migrateV4ToV5(v4: V4Scene): V5Scene {
  * pre-v6 document would hit the "no primitive type" refusal. Adding type definitions changes no
  * existing instance, since nothing in a v5 document can reference them.
  */
-function migrateV5ToV6(v5: V5Scene): SceneGraph {
+function migrateV5ToV6(v5: V5Scene): V6Scene {
   const existingIds = new Set(v5.types.map((t) => t.id))
   const missingPrimitiveTypes = DEFAULT_TYPES.filter(
     (t) => t.category === 'primitive' && !existingIds.has(t.id),
@@ -313,10 +325,35 @@ function migrateV5ToV6(v5: V5Scene): SceneGraph {
 
   return {
     ...v5,
-    schemaVersion: SCHEMA_VERSION,
+    schemaVersion: 6,
     types: [...v5.types, ...missingPrimitiveTypes],
     primitives: [],
     booleans: [],
+  }
+}
+
+// ---------------------------------------------------------------------------
+// v6 → v7
+// ---------------------------------------------------------------------------
+
+/**
+ * v7 adds stairs and railings (B2/B3). Purely additive, same shape of change as v5→v6: both
+ * collections start empty, and the default STAIR/RAILING types are back-filled (skipping any id
+ * already taken) so a migrated project can use both tools immediately rather than hitting a
+ * "no stair/railing type" refusal.
+ */
+function migrateV6ToV7(v6: V6Scene): SceneGraph {
+  const existingIds = new Set(v6.types.map((t) => t.id))
+  const missingTypes = DEFAULT_TYPES.filter(
+    (t) => (t.category === 'stair' || t.category === 'railing') && !existingIds.has(t.id),
+  ).map((t) => ({ ...t }))
+
+  return {
+    ...v6,
+    schemaVersion: SCHEMA_VERSION,
+    types: [...v6.types, ...missingTypes],
+    stairs: [],
+    railings: [],
   }
 }
 
@@ -337,14 +374,17 @@ export function migrateScene(raw: unknown): SceneGraph {
   const version = (raw as { schemaVersion?: unknown }).schemaVersion
 
   if (version === 1) {
-    return migrateV5ToV6(
-      migrateV4ToV5(migrateV3ToV4(migrateV2ToV3(migrateV1ToV2(raw as V1Scene)))),
+    return migrateV6ToV7(
+      migrateV5ToV6(migrateV4ToV5(migrateV3ToV4(migrateV2ToV3(migrateV1ToV2(raw as V1Scene))))),
     )
   }
-  if (version === 2) return migrateV5ToV6(migrateV4ToV5(migrateV3ToV4(migrateV2ToV3(raw as V2Scene))))
-  if (version === 3) return migrateV5ToV6(migrateV4ToV5(migrateV3ToV4(raw as V3Scene)))
-  if (version === 4) return migrateV5ToV6(migrateV4ToV5(raw as V4Scene))
-  if (version === 5) return migrateV5ToV6(raw as V5Scene)
+  if (version === 2) {
+    return migrateV6ToV7(migrateV5ToV6(migrateV4ToV5(migrateV3ToV4(migrateV2ToV3(raw as V2Scene)))))
+  }
+  if (version === 3) return migrateV6ToV7(migrateV5ToV6(migrateV4ToV5(migrateV3ToV4(raw as V3Scene))))
+  if (version === 4) return migrateV6ToV7(migrateV5ToV6(migrateV4ToV5(raw as V4Scene)))
+  if (version === 5) return migrateV6ToV7(migrateV5ToV6(raw as V5Scene))
+  if (version === 6) return migrateV6ToV7(raw as V6Scene)
   if (version === SCHEMA_VERSION) return raw as SceneGraph
 
   if (typeof version === 'number' && version > SCHEMA_VERSION) {

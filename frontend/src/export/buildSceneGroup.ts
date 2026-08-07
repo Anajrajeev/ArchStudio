@@ -10,6 +10,7 @@ import {
   resolveWall,
   resolveSlab,
   wallSolidBoxes,
+  boxToTriMesh,
   columnSolid,
   beamSolid,
   polygonArea,
@@ -18,7 +19,10 @@ import {
   profileExtents,
   type Box3D,
 } from '../../../shared/geometry/index'
+import { triMeshToGeometry } from '../scene/geometryUtils'
 import { resolveRoof, isRoofError } from '../../../shared/geometry/roof'
+import { resolveStair, stairSolidBoxes } from '../../../shared/geometry/stair'
+import { resolveRailing, railingSolidBoxes } from '../../../shared/geometry/railing'
 import {
   freePrimitives,
   rootBooleanNodes,
@@ -59,6 +63,14 @@ function materialCache(): (color: string, opts?: { transparent?: boolean }) => T
 }
 
 function boxMesh(box: Box3D, material: THREE.Material, name: string): THREE.Mesh {
+  // Wall voiding (B1): a box cut to a roof plane has a sloped top a plain BoxGeometry cannot
+  // express. Built from the SAME boxCorners() every other consumer uses (the viewport, box-select),
+  // so the exported mesh cannot disagree with what is on screen.
+  if (box.topRamp) {
+    const mesh = new THREE.Mesh(triMeshToGeometry(boxToTriMesh(box)), material)
+    mesh.name = name
+    return mesh
+  }
   const mesh = new THREE.Mesh(new THREE.BoxGeometry(...box.size), material)
   mesh.position.set(...box.center)
   mesh.rotation.y = box.rotationY
@@ -305,6 +317,26 @@ export function buildSceneGroup(scene: SceneGraph, csg?: CsgModule): THREE.Group
       mesh.name = `boolean:${node.id}`
       groupFor(node.levelId).add(mesh)
     }
+  }
+
+  // ---- Stairs (B2) ----
+  for (const stair of scene.stairs) {
+    const resolved = resolveStair(scene, stair)
+    if (!resolved) continue
+    const boxes = stairSolidBoxes(resolved)
+    const material = mat(materialColor(scene, resolved.material))
+    const g = groupFor(stair.levelId)
+    boxes.forEach((box, i) => g.add(boxMesh(box, material, `stair:${stair.id}:${i}`)))
+  }
+
+  // ---- Railings (B3) ----
+  for (const railing of scene.railings) {
+    const resolved = resolveRailing(scene, railing)
+    if (!resolved) continue
+    const boxes = railingSolidBoxes(resolved)
+    const material = mat(materialColor(scene, resolved.material))
+    const g = groupFor(railing.levelId)
+    boxes.forEach((box, i) => g.add(boxMesh(box, material, `railing:${railing.id}:${i}`)))
   }
 
   return root

@@ -34,6 +34,7 @@ import {
   unionElements,
 } from '../editor/booleanVerbs'
 import { validateOperands } from '../../../shared/geometry/booleanTree'
+import { splitRoofAndWalls, voidWallsToRoof } from '../editor/roofVoid'
 import { selectionCentroid } from '../editor/selection'
 import type { SceneGraph, Vec2 } from '../../../shared/types/scene'
 
@@ -97,6 +98,7 @@ export default function ModifyPanel() {
   // `validateOperands` is the single source of truth for whether a boolean is possible, so the
   // buttons appear exactly when the verb would succeed — no second, drifting copy of the rule.
   const booleanReady = validateOperands(scene, selectedIds) === null
+  const roofVoidReady = !('error' in splitRoofAndWalls(scene, selectedIds))
   const explodableId =
     selectedIds.length === 1 && scene.booleans.some((b) => b.id === selectedIds[0])
       ? selectedIds[0]
@@ -228,6 +230,23 @@ export default function ModifyPanel() {
             onClick={() => run(() => explodeBoolean(scene, explodableId))}
           >
             {t('modify.explode')}
+          </button>
+        </Actions>
+      )}
+
+      {/* Void to roof (B1): select one roof plus the wall(s) under its eave and attach their tops
+          to it. Only a wall running along the roof's own eave line qualifies — voidWallsToRoof
+          refuses with a message otherwise, so this is shown whenever the selection SHAPE (one
+          roof + walls) is right, and the verb itself explains a per-wall refusal. Detaching is a
+          per-wall action in Properties, not a verb — there is nothing to select-and-batch there. */}
+      {roofVoidReady && (
+        <Actions>
+          <button
+            className="btn"
+            style={{ width: '100%' }}
+            onClick={() => run(() => voidWallsToRoof(scene, selectedIds))}
+          >
+            {t('modify.voidToRoof')}
           </button>
         </Actions>
       )}

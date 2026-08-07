@@ -12,11 +12,7 @@
  * cost, and `buildSceneGroup` stays synchronous and testable.
  */
 import * as THREE from 'three'
-import {
-  primitiveMesh,
-  isPrimitiveError,
-  type TriMesh,
-} from '../../../shared/geometry/primitives'
+import { primitiveMesh, isPrimitiveError } from '../../../shared/geometry/primitives'
 import {
   resolveBooleanNode,
   isBooleanTreeError,
@@ -28,6 +24,9 @@ import {
   type Primitive,
   type SceneGraph,
 } from '../../../shared/types/scene'
+import { triMeshToGeometry } from '../scene/geometryUtils'
+
+export { triMeshToGeometry }
 
 /** The subset of `three-bvh-csg` this module uses. */
 export interface CsgModule {
@@ -88,15 +87,6 @@ export function sceneNeedsCsg(scene: SceneGraph): boolean {
 // ---------------------------------------------------------------------------
 // Primitive → BufferGeometry
 // ---------------------------------------------------------------------------
-
-/** Convert a pure `TriMesh` into a Three geometry. Normals are computed, positions are not welded. */
-export function triMeshToGeometry(mesh: TriMesh): THREE.BufferGeometry {
-  const geom = new THREE.BufferGeometry()
-  geom.setAttribute('position', new THREE.Float32BufferAttribute(mesh.positions, 3))
-  geom.setIndex(mesh.indices)
-  geom.computeVertexNormals()
-  return geom
-}
 
 /**
  * The world transform of a placed primitive: scene 2D `[x, y]` maps to world `[x, elevation, y]`

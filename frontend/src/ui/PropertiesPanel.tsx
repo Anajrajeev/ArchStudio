@@ -62,8 +62,12 @@ import {
   setRoofUniformEdge,
   updatePrimitive,
   updateBooleanNode,
+  updateStair,
+  updateRailing,
 } from '../scene/mutations'
 import { resolveRoof, isRoofError } from '../../../shared/geometry/roof'
+import { resolveStair, validateStair } from '../../../shared/geometry/stair'
+import { resolveRailing, validateRailing } from '../../../shared/geometry/railing'
 import { IconTrash, IconPlus } from './Icons'
 import ModifyPanel from './ModifyPanel'
 
@@ -150,6 +154,8 @@ export default function PropertiesPanel() {
           {single.kind === 'roof' && <RoofProps id={single.id} />}
           {single.kind === 'primitive' && <PrimitiveProps id={single.id} />}
           {single.kind === 'boolean' && <BooleanProps id={single.id} />}
+          {single.kind === 'stair' && <StairProps id={single.id} />}
+          {single.kind === 'railing' && <RailingProps id={single.id} />}
 
           <div style={{ padding: 'var(--sp-8)' }}>
             <button
@@ -959,6 +965,96 @@ function RoofProps({ id }: { id: string }) {
 }
 
 /**
+ * Stair (B2). `desiredNumberOfRisers` is what the user sets; `actualRiserHeight` is DERIVED and
+ * shown read-only, so it is never possible for the two to drift apart in the UI the way they
+ * cannot in the schema either (see shared/geometry/stair.ts). Blondel comfort feedback and any
+ * geometric refusal both surface as the same issues list — feedback, not a hard block.
+ */
+function StairProps({ id }: { id: string }) {
+  const { t } = useTranslation()
+  const scene = useEditor((s) => s.scene)
+  const commit = useEditor((s) => s.commit)
+  const stair = scene.stairs.find((x) => x.id === id)
+  if (!stair) return null
+  const resolved = resolveStair(scene, stair)
+  const issues = validateStair(scene, stair)
+
+  return (
+    <>
+      <Group label={t('properties.instanceGroup')}>
+        <NumberField
+          label={t('properties.desiredRisers')}
+          value={stair.desiredNumberOfRisers}
+          min={2}
+          step={1}
+          onCommit={(v) =>
+            commit('Set riser count', (s) =>
+              updateStair(s, id, { desiredNumberOfRisers: Math.round(v) }),
+            )
+          }
+        />
+        <ReadOnly
+          label={t('properties.actualRiserHeight')}
+          value={resolved ? formatLength(resolved.actualRiserHeight, scene.units) : '—'}
+        />
+        <NumberField
+          label={t('properties.baseOffset')}
+          value={stair.baseOffset}
+          step={0.05}
+          onCommit={(v) => commit('Set stair base offset', (s) => updateStair(s, id, { baseOffset: v }))}
+        />
+        <TopConstraintField
+          value={stair.top}
+          levelId={stair.levelId}
+          onCommit={(top) => commit('Set stair top', (s) => updateStair(s, id, { top }))}
+        />
+      </Group>
+      {issues.length > 0 && (
+        <p style={{ color: 'var(--status-error)', fontSize: 'var(--fs-label)', padding: '0 var(--sp-8)' }}>
+          {issues.join(' · ')}
+        </p>
+      )}
+    </>
+  )
+}
+
+/** Railing (B3): a continuous rail plus posts along an open path. */
+function RailingProps({ id }: { id: string }) {
+  const { t } = useTranslation()
+  const scene = useEditor((s) => s.scene)
+  const commit = useEditor((s) => s.commit)
+  const railing = scene.railings.find((x) => x.id === id)
+  if (!railing) return null
+  const resolved = resolveRailing(scene, railing)
+  const issues = validateRailing(scene, railing)
+
+  return (
+    <>
+      <Group label={t('properties.instanceGroup')}>
+        <NumberField
+          label={t('properties.baseOffset')}
+          value={railing.baseOffset}
+          step={0.05}
+          onCommit={(v) =>
+            commit('Set railing base offset', (s) => updateRailing(s, id, { baseOffset: v }))
+          }
+        />
+        <ReadOnly label={t('properties.pathPoints')} value={String(railing.path.length)} />
+        <ReadOnly
+          label={t('properties.length')}
+          value={resolved ? formatLength(resolved.totalLength, scene.units) : '—'}
+        />
+      </Group>
+      {issues.length > 0 && (
+        <p style={{ color: 'var(--status-error)', fontSize: 'var(--fs-label)', padding: '0 var(--sp-8)' }}>
+          {issues.join(' · ')}
+        </p>
+      )}
+    </>
+  )
+}
+
+/**
  * Primitive solid (B7). Shape parameters live on the TYPE, so editing them updates every instance
  * of that type — the defining BIM interaction (D-009). That is flagged in the UI rather than left
  * as a surprise, the same way the wall-thickness handle is (D1).
@@ -1490,6 +1586,27 @@ function TopConstraintField({
   const scene = useEditor((s) => s.scene)
   const levels = [...scene.levels].sort((a, b) => a.elevation - b.elevation)
   const base = findLevel(scene, levelId)
+
+  // A roof-attached top is set by the "Void to roof" verb (Modify panel), not from here — this
+  // field only shows what it is attached to and lets you detach. See DECISIONS.md D-020.
+  if (value.kind === 'roof') {
+    const roof = scene.roofs.find((r) => r.id === value.roofId)
+    return (
+      <>
+        <span className="prop-label">{t('properties.topConstraint')}</span>
+        <span className="prop-value">
+          {roof ? `${t('properties.attachedToRoof')} — ${elementLabel(scene, roof.id)}` : t('properties.attachedToRoof')}
+        </span>
+        <span />
+        <button
+          className="btn"
+          onClick={() => onCommit({ kind: 'unconnected', height: base?.height ?? 2.8 })}
+        >
+          {t('properties.detachFromRoof')}
+        </button>
+      </>
+    )
+  }
 
   return (
     <>

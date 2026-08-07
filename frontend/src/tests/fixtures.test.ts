@@ -160,6 +160,23 @@ function populatedSceneGraph(): SceneGraph {
         },
         material: 'mat-steel',
       },
+      {
+        id: 'stt-1',
+        category: 'stair',
+        name: 'Stair',
+        width: 1,
+        treadDepth: 0.28,
+        material: 'mat-oak',
+      },
+      {
+        id: 'rlt-1',
+        category: 'railing',
+        name: 'Railing',
+        height: 0.9,
+        postThickness: 0.04,
+        postSpacing: 1,
+        material: 'mat-steel',
+      },
     ],
     levels: [
       {
@@ -179,7 +196,7 @@ function populatedSceneGraph(): SceneGraph {
         computationHeight: 0,
       },
     ],
-    // Both Baseline variants and both TopConstraint variants.
+    // All three TopConstraint variants, and both Baseline variants.
     walls: [
       {
         id: 'w1',
@@ -201,6 +218,18 @@ function populatedSceneGraph(): SceneGraph {
         top: { kind: 'unconnected', height: 2.8 },
         locationLine: 'finish-exterior',
         flipped: true,
+        roomBounding: true,
+      },
+      {
+        // Collinear with the rf1 roof's own [0,0]-[6,0] footprint edge (B1 wall voiding, D-020).
+        id: 'w3',
+        typeId: 'wt-1',
+        levelId: 'lv2',
+        baseline: { kind: 'line', start: [0, 0], end: [6, 0] },
+        baseOffset: 0,
+        top: { kind: 'roof', roofId: 'rf1' },
+        locationLine: 'centerline',
+        flipped: false,
         roomBounding: true,
       },
     ],
@@ -439,19 +468,43 @@ function populatedSceneGraph(): SceneGraph {
       { id: 'bool1', levelId: 'lv1', op: 'union', operandIds: ['pr1', 'pr2'] },
       { id: 'bool2', levelId: 'lv1', op: 'cut', operandIds: ['bool1', 'pr3'] },
     ],
+    stairs: [
+      {
+        id: 'stair1',
+        typeId: 'stt-1',
+        levelId: 'lv1',
+        baseline: { start: [10, 0], end: [10, -3] },
+        baseOffset: 0,
+        top: { kind: 'level', levelId: 'lv2', offset: 0 },
+        desiredNumberOfRisers: 17,
+      },
+    ],
+    railings: [
+      {
+        id: 'railing1',
+        typeId: 'rlt-1',
+        levelId: 'lv1',
+        path: [
+          [10, -3],
+          [11, -3],
+          [11, -4],
+        ],
+        baseOffset: 0,
+      },
+    ],
   }
 }
 
 describe('golden scene-graph fixtures', () => {
-  it('the empty document still matches shared/fixtures/scene-v6-empty.json', async () => {
+  it('the empty document still matches shared/fixtures/scene-v7-empty.json', async () => {
     await expect(JSON.stringify(emptySceneGraph('fixture-project'), null, 2) + '\n').toMatchFileSnapshot(
-      '../../../shared/fixtures/scene-v6-empty.json',
+      '../../../shared/fixtures/scene-v7-empty.json',
     )
   })
 
-  it('the populated document still matches shared/fixtures/scene-v6-populated.json', async () => {
+  it('the populated document still matches shared/fixtures/scene-v7-populated.json', async () => {
     await expect(JSON.stringify(populatedSceneGraph(), null, 2) + '\n').toMatchFileSnapshot(
-      '../../../shared/fixtures/scene-v6-populated.json',
+      '../../../shared/fixtures/scene-v7-populated.json',
     )
   })
 
@@ -474,6 +527,6 @@ describe('golden scene-graph fixtures', () => {
 
   it('pins the schema version the fixtures were written for', () => {
     // A bump here is the signal to regenerate the fixtures AND update shared/python/models.py.
-    expect(SCHEMA_VERSION).toBe(6)
+    expect(SCHEMA_VERSION).toBe(7)
   })
 })

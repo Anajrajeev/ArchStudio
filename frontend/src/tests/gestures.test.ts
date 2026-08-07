@@ -15,6 +15,7 @@ import {
   buildModify,
   isHostedTool,
   isLoopTool,
+  isPathTool,
   isModifyTool,
   isPairTool,
   pointsNeeded,
@@ -134,6 +135,11 @@ function click(px: number, py: number): void {
       commitActiveTool(s.points)
       return
     }
+    s.addPoint(r.point)
+    return
+  }
+
+  if (isPathTool(s.tool)) {
     s.addPoint(r.point)
     return
   }
@@ -1074,5 +1080,74 @@ describe('boolean verbs from a real selection (B7)', () => {
     const [a] = placeTwo()
     const result = unionElements(useEditor.getState().scene, [a])
     expect(isVerbError(result)).toBe(true)
+  })
+})
+
+describe('stair gesture (B2)', () => {
+  it('two clicks place a straight flight along the clicked direction', () => {
+    pickTool('stair')
+    click(...px(0, 0))
+    click(...px(3, 0))
+
+    const s = useEditor.getState()
+    expect(s.scene.stairs).toHaveLength(1)
+    const stair = s.scene.stairs[0]
+    expect(stair.baseline.start[0]).toBeCloseTo(0)
+    expect(stair.baseline.end[0]).toBeCloseTo(3)
+  })
+
+  it('is one undo entry', () => {
+    const before = useEditor.getState().undoStack.length
+    pickTool('stair')
+    click(...px(0, 0))
+    click(...px(3, 0))
+    expect(useEditor.getState().undoStack.length).toBe(before + 1)
+    useEditor.getState().undo()
+    expect(useEditor.getState().scene.stairs).toHaveLength(0)
+  })
+
+  it('refuses a zero-length flight rather than placing a degenerate one', () => {
+    pickTool('stair')
+    click(...px(0, 0))
+    click(...px(0, 0))
+    expect(useEditor.getState().scene.stairs).toHaveLength(0)
+  })
+})
+
+describe('railing gesture (B3)', () => {
+  it('several clicks then Enter place an open path — it does NOT close on the first point', () => {
+    pickTool('railing')
+    click(...px(0, 0))
+    click(...px(3, 0))
+    click(...px(0, 0)) // clicking back near the start must NOT close the path (unlike a loop tool)
+    expect(useEditor.getState().scene.railings).toHaveLength(0)
+    expect(useEditor.getState().points).toHaveLength(3)
+
+    // Enter finishes it — mirrors App.tsx's `isPathTool(s.tool) && s.points.length >= 2` gate.
+    commitActiveTool(useEditor.getState().points)
+    const s = useEditor.getState()
+    expect(s.scene.railings).toHaveLength(1)
+    expect(s.scene.railings[0].path).toHaveLength(3)
+  })
+
+  it('refuses to finish with only one point', () => {
+    pickTool('railing')
+    click(...px(0, 0))
+    // Mirrors the Enter guard: nothing should call commitActiveTool with under 2 points, but
+    // prove the tool-level refusal holds even if it somehow did.
+    commitActiveTool(useEditor.getState().points)
+    expect(useEditor.getState().scene.railings).toHaveLength(0)
+  })
+
+  it('is one undo entry for the whole path', () => {
+    const before = useEditor.getState().undoStack.length
+    pickTool('railing')
+    click(...px(0, 0))
+    click(...px(2, 0))
+    click(...px(2, 2))
+    commitActiveTool(useEditor.getState().points)
+    expect(useEditor.getState().undoStack.length).toBe(before + 1)
+    useEditor.getState().undo()
+    expect(useEditor.getState().scene.railings).toHaveLength(0)
   })
 })

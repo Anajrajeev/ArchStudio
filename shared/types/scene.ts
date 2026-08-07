@@ -13,7 +13,7 @@
 export type Vec2 = [number, number]
 export type Vec3 = [number, number, number]
 
-export const SCHEMA_VERSION = 6 as const
+export const SCHEMA_VERSION = 7 as const
 
 // ---------------------------------------------------------------------------
 // Materials
@@ -52,6 +52,8 @@ export type TypeCategory =
   | 'furniture'
   | 'roof'
   | 'primitive'
+  | 'stair'
+  | 'railing'
 
 export interface WallTypeDef {
   id: string
@@ -179,6 +181,36 @@ export interface PrimitiveTypeDef {
   material: string
 }
 
+/**
+ * A straight stair flight (B2). Shape lives here: `treadDepth` (the going) and `width` are shared
+ * by every instance of the type; how many risers a given flight has, and the rise it must cover,
+ * are per-instance (see `Stair`) — the same Category → Type → Instance split as everything else.
+ */
+export interface StairTypeDef {
+  id: string
+  category: 'stair'
+  name: string
+  /** Clear width of the flight, perpendicular to the direction of travel. */
+  width: number
+  /** Nominal tread depth (the "going"). */
+  treadDepth: number
+  material: string
+}
+
+/** A railing (B3): a continuous top rail plus evenly spaced vertical posts along an open path. */
+export interface RailingTypeDef {
+  id: string
+  category: 'railing'
+  name: string
+  /** Height from the walking surface to the top of the handrail. */
+  height: number
+  /** Cross-section side of both the rail and the posts. */
+  postThickness: number
+  /** Centre-to-centre spacing of posts along the path. */
+  postSpacing: number
+  material: string
+}
+
 export type ElementTypeDef =
   | WallTypeDef
   | DoorTypeDef
@@ -189,6 +221,8 @@ export type ElementTypeDef =
   | FurnitureTypeDef
   | RoofTypeDef
   | PrimitiveTypeDef
+  | StairTypeDef
+  | RailingTypeDef
 
 // ---------------------------------------------------------------------------
 // Levels
@@ -219,6 +253,12 @@ export interface Level {
 export type TopConstraint =
   | { kind: 'level'; levelId: string; offset: number }
   | { kind: 'unconnected'; height: number }
+  /**
+   * The top follows a roof's underside (B1 wall voiding, D-020). Only a WALL resolves this to a
+   * ramped top (`shared/geometry/roof.ts` `wallRoofRamp`) — a column or room using it just reads
+   * the roof's `baseHeight` as a flat reference, via `resolveTopElevation` below.
+   */
+  | { kind: 'roof'; roofId: string }
 
 // ---------------------------------------------------------------------------
 // Walls
@@ -383,6 +423,43 @@ export interface BooleanNode {
   levelId: string
   op: BooleanOp
   operandIds: string[]
+}
+
+// ---------------------------------------------------------------------------
+// Stairs (B2)
+// ---------------------------------------------------------------------------
+
+/**
+ * A straight stair flight. `desiredNumberOfRisers` is stored; `actualRiserHeight` is DERIVED
+ * (`shared/geometry/stair.ts` `resolveStair`) from it and the resolved rise (`top` minus the
+ * base), never stored — so moving the level the stair lands on keeps the flight consistent
+ * instead of drifting out of sync with a separately-stored riser height.
+ */
+export interface Stair {
+  id: string
+  typeId: string
+  levelId: string
+  /** Straight run in plan; only its direction and start point matter — length is derived. */
+  baseline: { start: Vec2; end: Vec2 }
+  baseOffset: number
+  /** What the flight climbs to — reuses the wall/column TopConstraint union. */
+  top: TopConstraint
+  /** The user's intent; `actualRiserHeight` is what actually results from it. */
+  desiredNumberOfRisers: number
+}
+
+// ---------------------------------------------------------------------------
+// Railings (B3)
+// ---------------------------------------------------------------------------
+
+export interface Railing {
+  id: string
+  typeId: string
+  levelId: string
+  /** Open polyline in plan (>= 2 points) — a wall's baseline generalised to several segments. */
+  path: Vec2[]
+  /** Elevation of the walking surface the railing stands on, relative to its level. */
+  baseOffset: number
 }
 
 // ---------------------------------------------------------------------------
@@ -566,6 +643,8 @@ export interface SceneGraph {
   roofs: Roof[]
   primitives: Primitive[]
   booleans: BooleanNode[]
+  stairs: Stair[]
+  railings: Railing[]
 }
 
 /** Every collection key that holds scene elements (BIM model objects). */
@@ -582,6 +661,8 @@ export const ELEMENT_COLLECTIONS = [
   'roofs',
   'primitives',
   'booleans',
+  'stairs',
+  'railings',
 ] as const
 
 export type ElementCollection = (typeof ELEMENT_COLLECTIONS)[number]
@@ -745,6 +826,23 @@ export const DEFAULT_TYPES: ElementTypeDef[] = [
     shape: { kind: 'torus', radius: 0.5, tubeRadius: 0.2, radialSegments: 16, tubularSegments: 32 },
     material: 'mat-steel',
   },
+  {
+    id: 'st-stair-280',
+    category: 'stair',
+    name: 'Stair — 1000mm wide, 280mm tread',
+    width: 1,
+    treadDepth: 0.28,
+    material: 'mat-oak',
+  },
+  {
+    id: 'rl-standard',
+    category: 'railing',
+    name: 'Railing — 900mm',
+    height: 0.9,
+    postThickness: 0.04,
+    postSpacing: 1,
+    material: 'mat-steel',
+  },
 ]
 
 export function emptySceneGraph(projectId: string): SceneGraph {
@@ -771,6 +869,8 @@ export function emptySceneGraph(projectId: string): SceneGraph {
     roofs: [],
     primitives: [],
     booleans: [],
+    stairs: [],
+    railings: [],
   }
 }
 
@@ -805,6 +905,16 @@ export function findPrimitiveType(
   return t?.category === 'primitive' ? t : undefined
 }
 
+export function findStairType(scene: SceneGraph, typeId: string): StairTypeDef | undefined {
+  const t = findType(scene, typeId)
+  return t?.category === 'stair' ? t : undefined
+}
+
+export function findRailingType(scene: SceneGraph, typeId: string): RailingTypeDef | undefined {
+  const t = findType(scene, typeId)
+  return t?.category === 'railing' ? t : undefined
+}
+
 export function findLevel(scene: SceneGraph, levelId: string): Level | undefined {
   return scene.levels.find((l) => l.id === levelId)
 }
@@ -821,6 +931,13 @@ export function resolveTopElevation(
   baseElevation: number,
 ): number {
   if (top.kind === 'unconnected') return baseElevation + top.height
+  if (top.kind === 'roof') {
+    const roof = scene.roofs.find((r) => r.id === top.roofId)
+    // A NOMINAL (unramped) reference elevation — the roof's own datum. A wall additionally ramps
+    // around this in `shared/geometry/index.ts` resolveWall; other elements (column, room) that
+    // point a TopConstraint at a roof just get this flat value.
+    return roof ? roof.baseHeight : baseElevation + 2.8 // orphaned — same fallback as a dead level
+  }
   const level = findLevel(scene, top.levelId)
   if (!level) return baseElevation + 2.8 // orphaned constraint — fall back to a sane storey height
   return level.elevation + top.offset

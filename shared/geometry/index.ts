@@ -25,6 +25,8 @@ import {
   type SceneGraph,
   type ProfileShape,
 } from '../types/scene'
+import { wallRoofRamp, isRoofError, type WallRoofRamp } from './roof'
+import type { TriMesh } from './primitives'
 
 // ---------------------------------------------------------------------------
 // 2D primitives
@@ -391,6 +393,12 @@ export interface ResolvedWall {
   centerline: Baseline
   length: number
   material: string
+  /**
+   * Set when `wall.top.kind === 'roof'` and the wall qualifies (B1). Undefined for an ordinary
+   * flat-topped wall — `wallSolidBoxes` only ramps a chunk's top when this is present, so nothing
+   * about an unrelated wall's geometry changes.
+   */
+  roofRamp?: WallRoofRamp
 }
 
 /**
@@ -425,6 +433,20 @@ export function resolveWall(scene: SceneGraph, wall: Wall): ResolvedWall | null 
     type.layers.find((l) => l.function === 'structure') ??
     type.layers.reduce((a, b) => (b.thickness > a.thickness ? b : a), type.layers[0])
 
+  // Wall voiding (B1): a wall attached to a roof gets a per-thickness ramp on top of the flat
+  // `topElevation` resolveTopElevation already computed. A wall that does not qualify (curved, or
+  // not collinear with an eave) simply keeps a flat top — `validateWall` is where that refusal
+  // surfaces as a message; resolveWall itself never throws.
+  let roofRamp: WallRoofRamp | undefined
+  const top = wall.top
+  if (top.kind === 'roof') {
+    const roof = scene.roofs.find((r) => r.id === top.roofId)
+    if (roof) {
+      const ramp = wallRoofRamp(roof, centerline, thickness)
+      if (!isRoofError(ramp)) roofRamp = ramp
+    }
+  }
+
   return {
     id: wall.id,
     thickness,
@@ -434,6 +456,7 @@ export function resolveWall(scene: SceneGraph, wall: Wall): ResolvedWall | null 
     centerline,
     length: baselineLength(centerline),
     material: structural?.material ?? 'mat-plaster-white',
+    roofRamp,
   }
 }
 
@@ -450,6 +473,14 @@ export interface Box3D {
   center: Vec3
   size: Vec3
   rotationY: number
+  /**
+   * Wall voiding (B1): when set, the TOP face ramps linearly across the box's local thickness
+   * axis (local Z) — the local -Z ("front") top edge drops by `topRamp / 2` and the local +Z
+   * ("back") top edge rises by `topRamp / 2`, so the average top elevation is unchanged. This is
+   * the wedge cross-section a wall gets when its top is cut to a sloped roof plane. Undefined (or
+   * 0) for every ordinary flat-topped box — columns, beams, and most walls never set this.
+   */
+  topRamp?: number
 }
 
 /** Rotation about world Y so a box's local +X follows a 2D direction (scene y → world z). */
@@ -469,6 +500,7 @@ export function boxCorners(box: Box3D): Vec3[] {
   const cos = Math.cos(box.rotationY)
   const sin = Math.sin(box.rotationY)
   const out: Vec3[] = []
+  const rampHalf = (box.topRamp ?? 0) / 2
   // Rotation about Y: [x,z] → [x·cos + z·sin, −x·sin + z·cos].
   for (const sy of [-1, 1]) {
     for (const [sx, sz] of [
@@ -479,14 +511,47 @@ export function boxCorners(box: Box3D): Vec3[] {
     ]) {
       const x = sx * hx
       const z = sz * hz
+      // Only the TOP corners (sy === 1) ramp — sz === -1 ("front") drops, sz === 1 ("back")
+      // rises, by half the ramp each, so the box's nominal centre height is still the average.
+      const rampY = sy === 1 ? sz * rampHalf : 0
       out.push([
         box.center[0] + x * cos + z * sin,
-        box.center[1] + sy * hy,
+        box.center[1] + sy * hy + rampY,
         box.center[2] - x * sin + z * cos,
       ])
     }
   }
   return out
+}
+
+/**
+ * Triangulate a box as an indexed mesh (position-only, outward-facing, no UVs — matching
+ * `shared/geometry/primitives.ts`'s convention exactly, since both feed the same
+ * `three-bvh-csg`-free renderer path). The ONLY reason this exists alongside plain
+ * `THREE.BoxGeometry` is a box with `topRamp` set: its top face is not flat, so the renderer and
+ * exporter route a ramped wall chunk through this instead (see `viewport/Elements.tsx`'s
+ * `WallMesh` and `export/buildSceneGroup.ts`'s wall loop) while every other box — including every
+ * OTHER wall chunk — keeps using `THREE.BoxGeometry` unchanged.
+ */
+export function boxToTriMesh(box: Box3D): TriMesh {
+  const c = boxCorners(box)
+  const positions: number[] = []
+  for (const [x, y, z] of c) positions.push(x, y, z)
+
+  // Reversed pair order per triangle to match primitives.ts's MeshBuilder convention: faces below
+  // are written in the order that reads naturally walking each face, which is clockwise seen from
+  // outside in this right-handed Y-up system, so the emitted triangle is the reversed triple.
+  const quad = (a: number, b: number, c2: number, d: number): number[] => [a, c2, b, a, d, c2]
+
+  const indices: number[] = [
+    ...quad(0, 3, 2, 1), // bottom
+    ...quad(4, 5, 6, 7), // top
+    ...quad(0, 1, 5, 4), // local -Z
+    ...quad(1, 2, 6, 5), // local +X
+    ...quad(2, 3, 7, 6), // local +Z
+    ...quad(3, 0, 4, 7), // local -X
+  ]
+  return { positions, indices }
 }
 
 /** Index pairs for the 12 edges of the corner list `boxCorners` returns. */
@@ -587,10 +652,15 @@ export function wallSolidBoxes(wall: ResolvedWall, openings: Opening[]): Box3D[]
     const chord = distance(a.point, b.point)
     if (chord < 1e-9) return
     const dir = direction(a.point, b.point)
+    // Only a chunk that reaches the wall's own top ramps — a below-sill or under-lintel section
+    // stops well short of the roof and must stay flat. `wall.roofRamp` is only ever set for a
+    // straight wall (wallRoofRamp refuses a curved one), so every chunk here shares one direction.
+    const reachesTop = wall.roofRamp !== undefined && y1 >= height - 1e-6
     boxes.push({
       center: [mid[0], baseElevation + (y0 + y1) / 2, mid[1]],
       size: [chord, y1 - y0, thickness],
       rotationY: rotationYFor(dir),
+      topRamp: reachesTop ? wall.roofRamp!.backDelta - wall.roofRamp!.frontDelta : undefined,
     })
   }
 
@@ -694,6 +764,19 @@ export function validateWall(scene: SceneGraph, wall: Wall): string[] {
   const resolved = type ? resolveWall(scene, wall) : null
   if (resolved && resolved.height <= 0) {
     errors.push('Wall height must be positive — check its top constraint')
+  }
+  // Wall voiding (B1): surface WHY a roof-attached wall did not get a ramp, rather than letting
+  // it silently render flat. Gated on `resolved` because a missing type/level already errored
+  // above — no need to also chase a roof through geometry that cannot resolve anyway.
+  const top = wall.top
+  if (top.kind === 'roof' && resolved) {
+    const roof = scene.roofs.find((r) => r.id === top.roofId)
+    if (!roof) {
+      errors.push(`Unknown roof "${top.roofId}"`)
+    } else {
+      const ramp = wallRoofRamp(roof, resolved.centerline, resolved.thickness)
+      if (isRoofError(ramp)) errors.push(ramp.error)
+    }
   }
   return errors
 }

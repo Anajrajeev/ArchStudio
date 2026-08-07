@@ -34,6 +34,8 @@ from shared.python.models import (
     Level,
     MaterialLayer,
     PrimitiveTypeDef,
+    Railing,
+    RailingTypeDef,
     RectangularProfile,
     Roof,
     RoofEdge,
@@ -43,7 +45,10 @@ from shared.python.models import (
     SceneGraph,
     SchemaVersionError,
     SlabTypeDef,
+    Stair,
+    StairTypeDef,
     TopLevelConstraint,
+    TopRoofConstraint,
     TopUnconnected,
     Wall,
     WallTypeDef,
@@ -144,6 +149,12 @@ TYPE_DEFS: list[tuple[str, dict[str, Any], type]] = [
         {"shape": {"kind": "box", "width": 1, "depth": 1, "height": 1}, "material": "mat-concrete"},
         PrimitiveTypeDef,
     ),
+    ("stair", {"width": 1, "treadDepth": 0.28, "material": "mat-oak"}, StairTypeDef),
+    (
+        "railing",
+        {"height": 0.9, "postThickness": 0.04, "postSpacing": 1, "material": "mat-steel"},
+        RailingTypeDef,
+    ),
 ]
 
 
@@ -159,7 +170,7 @@ class TestElementTypeDefDiscrimination:
 
     def test_covers_every_category_in_the_schema(self) -> None:
         # Guards against a new ElementTypeDef variant landing in scene.ts with no test here.
-        assert len(TYPE_DEFS) == 9
+        assert len(TYPE_DEFS) == 11
 
     def test_unknown_category_rejected(self) -> None:
         with pytest.raises(ValidationError):
@@ -267,6 +278,12 @@ class TestUnions:
         w = Wall.model_validate(wall_payload())
         assert isinstance(w.top, TopUnconnected)
         assert w.top.height == 2.8
+
+    def test_top_constraint_roof(self) -> None:
+        # B1 wall voiding (D-020) — the third TopConstraint variant.
+        w = Wall.model_validate(wall_payload(top={"kind": "roof", "roofId": "rf1"}))
+        assert isinstance(w.top, TopRoofConstraint)
+        assert w.top.roof_id == "rf1"
 
     def test_baseline_line(self) -> None:
         w = Wall.model_validate(wall_payload())
@@ -443,6 +460,8 @@ class TestSceneGraph:
             "roofs",
             "primitives",
             "booleans",
+            "stairs",
+            "railings",
         ):
             assert getattr(sg, name) == [], name
 
@@ -462,7 +481,7 @@ class TestSceneGraph:
         # extra="forbid" is what makes the fixture parity tests meaningful: a collection added
         # to scene.ts but not mirrored here must fail loudly rather than be silently dropped.
         with pytest.raises(ValidationError):
-            SceneGraph.model_validate(scene(stairs=[]))
+            SceneGraph.model_validate(scene(elevators=[]))
 
     def test_parse_scene_accepts_current_version(self) -> None:
         assert parse_scene(scene()).project_id == "proj-1"
@@ -543,6 +562,29 @@ class TestSceneGraph:
             == 3.8
         )
 
+    def test_resolve_top_elevation_roof(self) -> None:
+        # B1 wall voiding (D-020): a roof constraint resolves to the roof's own baseHeight,
+        # regardless of base_elevation — it is a datum, not an offset from the wall's base.
+        sg = SceneGraph.model_validate(
+            scene(
+                roofs=[
+                    {
+                        "id": "rf1",
+                        "typeId": "rt-1",
+                        "levelId": "lv1",
+                        "footprint": [[0, 0], [6, 0], [6, 4], [0, 4]],
+                        "edges": [{"angle": 30, "overhang": 0.3}] * 4,
+                        "baseHeight": 3.0,
+                    }
+                ]
+            )
+        )
+        assert sg.resolve_top_elevation(TopRoofConstraint(kind="roof", roofId="rf1"), 1.0) == 3.0
+        # Dangling roof id — same orphan fallback as a dangling level id.
+        assert (
+            sg.resolve_top_elevation(TopRoofConstraint(kind="roof", roofId="gone"), 1.0) == 3.8
+        )
+
     def test_assembly_thickness(self) -> None:
         layers = [
             MaterialLayer.model_validate(
@@ -553,6 +595,84 @@ class TestSceneGraph:
             ),
         ]
         assert assembly_thickness(layers) == pytest.approx(0.185)
+
+
+class TestStairAndRailing:
+    """B2/B3. Both reuse patterns established for booleans/roofs — see DECISIONS.md."""
+
+    def test_stair_parses_and_keeps_top_constraint_union(self) -> None:
+        s = Stair.model_validate(
+            {
+                "id": "st1",
+                "typeId": "stt-1",
+                "levelId": "lv1",
+                "baseline": {"start": [0, 0], "end": [3, 0]},
+                "baseOffset": 0,
+                "top": {"kind": "unconnected", "height": 2.8},
+                "desiredNumberOfRisers": 16,
+            }
+        )
+        assert isinstance(s.top, TopUnconnected)
+        assert s.desired_number_of_risers == 16
+
+    def test_stair_needs_at_least_two_risers(self) -> None:
+        with pytest.raises(ValidationError):
+            Stair.model_validate(
+                {
+                    "id": "st1",
+                    "typeId": "stt-1",
+                    "levelId": "lv1",
+                    "baseline": {"start": [0, 0], "end": [3, 0]},
+                    "baseOffset": 0,
+                    "top": {"kind": "unconnected", "height": 2.8},
+                    "desiredNumberOfRisers": 1,
+                }
+            )
+
+    def test_stair_type_requires_positive_dimensions(self) -> None:
+        with pytest.raises(ValidationError):
+            StairTypeDef.model_validate(
+                {"id": "stt-1", "category": "stair", "name": "S", "width": 0, "treadDepth": 0.28,
+                 "material": "mat-oak"}
+            )
+
+    def test_railing_parses_and_needs_at_least_two_path_points(self) -> None:
+        r = Railing.model_validate(
+            {
+                "id": "rl1",
+                "typeId": "rlt-1",
+                "levelId": "lv1",
+                "path": [[0, 0], [3, 0]],
+                "baseOffset": 0,
+            }
+        )
+        assert len(r.path) == 2
+
+        with pytest.raises(ValidationError):
+            Railing.model_validate(
+                {
+                    "id": "rl1",
+                    "typeId": "rlt-1",
+                    "levelId": "lv1",
+                    "path": [[0, 0]],
+                    "baseOffset": 0,
+                }
+            )
+
+    def test_railing_type_camelcase_aliases(self) -> None:
+        t = RailingTypeDef.model_validate(
+            {
+                "id": "rlt-1",
+                "category": "railing",
+                "name": "R",
+                "height": 0.9,
+                "postThickness": 0.04,
+                "postSpacing": 1,
+                "material": "mat-steel",
+            }
+        )
+        assert t.post_thickness == 0.04
+        assert t.post_spacing == 1
 
 
 class TestSceneDiff:
@@ -587,12 +707,12 @@ class TestFixtureParity:
     fails these tests — which is the whole point.
     """
 
-    @pytest.mark.parametrize("name", ["scene-v6-empty.json", "scene-v6-populated.json"])
+    @pytest.mark.parametrize("name", ["scene-v7-empty.json", "scene-v7-populated.json"])
     def test_fixture_parses(self, name: str) -> None:
         sg = parse_scene(load_fixture(name))
         assert sg.schema_version == SCHEMA_VERSION
 
-    @pytest.mark.parametrize("name", ["scene-v6-empty.json", "scene-v6-populated.json"])
+    @pytest.mark.parametrize("name", ["scene-v7-empty.json", "scene-v7-populated.json"])
     def test_fixture_round_trips(self, name: str) -> None:
         raw = load_fixture(name)
         sg = parse_scene(raw)
@@ -600,12 +720,12 @@ class TestFixtureParity:
         assert again == sg
 
     def test_fixture_version_matches_the_python_constant(self) -> None:
-        assert load_fixture("scene-v6-empty.json")["schemaVersion"] == SCHEMA_VERSION
+        assert load_fixture("scene-v7-empty.json")["schemaVersion"] == SCHEMA_VERSION
 
     def test_populated_fixture_exercises_every_collection(self) -> None:
         # If this fails, the fixture stopped being a full-coverage document and the parity
         # guarantee quietly narrowed.
-        sg = parse_scene(load_fixture("scene-v6-populated.json"))
+        sg = parse_scene(load_fixture("scene-v7-populated.json"))
         for name in (
             "types",
             "levels",
@@ -626,11 +746,13 @@ class TestFixtureParity:
             "roofs",
             "primitives",
             "booleans",
+            "stairs",
+            "railings",
         ):
             assert getattr(sg, name), f"{name} is empty in the populated fixture"
 
     def test_populated_fixture_covers_every_type_category(self) -> None:
-        sg = parse_scene(load_fixture("scene-v6-populated.json"))
+        sg = parse_scene(load_fixture("scene-v7-populated.json"))
         assert {t.category for t in sg.types} == {
             "wall",
             "door",
@@ -641,23 +763,29 @@ class TestFixtureParity:
             "furniture",
             "roof",
             "primitive",
+            "stair",
+            "railing",
         }
 
     def test_typed_lookups_narrow_by_category(self) -> None:
         # Run against the fixture because it is the one document with every category present,
         # so each lookup is checked for both a hit AND a wrong-category miss.
-        sg = parse_scene(load_fixture("scene-v6-populated.json"))
+        sg = parse_scene(load_fixture("scene-v7-populated.json"))
         assert sg.find_wall_type("wt-1") is not None
         assert sg.find_slab_type("st-1") is not None
         assert sg.find_roof_type("rt-1") is not None
         assert sg.find_primitive_type("pt-box") is not None
+        assert sg.find_stair_type("stt-1") is not None
+        assert sg.find_railing_type("rlt-1") is not None
         # Every lookup must refuse an id that exists but is the wrong category.
         assert sg.find_slab_type("wt-1") is None
         assert sg.find_roof_type("st-1") is None
         assert sg.find_primitive_type("rt-1") is None
         assert sg.find_wall_type("pt-box") is None
+        assert sg.find_stair_type("rlt-1") is None
+        assert sg.find_railing_type("stt-1") is None
 
     def test_populated_fixture_covers_every_primitive_kind(self) -> None:
-        sg = parse_scene(load_fixture("scene-v6-populated.json"))
+        sg = parse_scene(load_fixture("scene-v7-populated.json"))
         kinds = {t.shape.kind for t in sg.types if isinstance(t, PrimitiveTypeDef)}
         assert kinds == set(PRIMITIVE_KINDS)

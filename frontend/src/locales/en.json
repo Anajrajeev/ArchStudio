@@ -23,7 +23,9 @@
       "text": "Text note",
       "leader": "Leader",
       "columngrid": "Column grid",
-      "primitive": "Primitive solid"
+      "primitive": "Primitive solid",
+      "stair": "Stair",
+      "railing": "Railing"
     },
     "undo": "Undo",
     "redo": "Redo",
@@ -67,7 +69,8 @@
     "union": "Union",
     "cut": "Cut",
     "intersect": "Intersect",
-    "explode": "Explode boolean"
+    "explode": "Explode boolean",
+    "voidToRoof": "Void to roof"
   },
   "viewport": {
     "emptyTitle": "Draw directly in the 3D view",
@@ -108,7 +111,9 @@
     "roofs": "Roofs",
     "columnGrids": "Column grids",
     "primitives": "Solids",
-    "booleans": "Booleans"
+    "booleans": "Booleans",
+    "stairs": "Stairs",
+    "railings": "Railings"
   },
   "status": {
     "noSnap": "No snap",
@@ -141,7 +146,11 @@
       "annotation": "Text",
       "roomTag": "Room tag",
       "columnGrid": "Column grid",
-      "roof": "Roof"
+      "roof": "Roof",
+      "primitive": "Solid",
+      "boolean": "Boolean",
+      "stair": "Stair",
+      "railing": "Railing"
     },
     "type": "Type",
     "duplicateType": "Duplicate type for this element",
@@ -238,7 +247,19 @@
     "booleanUnion": "Union",
     "booleanCut": "Cut",
     "booleanIntersect": "Intersect",
-    "booleanError": "Cannot resolve this boolean"
+    "booleanError": "Cannot resolve this boolean",
+    "attachedToRoof": "Attached to roof",
+    "detachFromRoof": "Detach",
+    "desiredRisers": "Desired risers",
+    "actualRiserHeight": "Actual riser height",
+    "treadDepth": "Tread depth",
+    "blondelWarning": "Comfort",
+    "stairError": "Stair issue",
+    "postThickness": "Post thickness",
+    "postSpacing": "Post spacing",
+    "railingHeight": "Rail height",
+    "railingError": "Railing issue",
+    "pathPoints": "Path points"
   },
   "chat": {
     "placeholder": "Describe what you want to design...",

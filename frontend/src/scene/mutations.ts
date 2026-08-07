@@ -33,6 +33,8 @@ import {
   type Primitive,
   type BooleanNode,
   type BooleanOp,
+  type Stair,
+  type Railing,
 } from '../../../shared/types/scene'
 import { resolveWall, baselineLength } from '../../../shared/geometry/index'
 import { booleanOpLabel } from '../../../shared/geometry/booleanTree'
@@ -61,6 +63,8 @@ export type ElementKind =
   | 'roof'
   | 'primitive'
   | 'boolean'
+  | 'stair'
+  | 'railing'
 
 export interface SelectedElement {
   kind: ElementKind
@@ -84,6 +88,8 @@ export function findElement(scene: SceneGraph, id: string): SelectedElement | nu
   if (scene.roofs.some((r) => r.id === id)) return { kind: 'roof', id }
   if (scene.primitives.some((p) => p.id === id)) return { kind: 'primitive', id }
   if (scene.booleans.some((b) => b.id === id)) return { kind: 'boolean', id }
+  if (scene.stairs.some((s) => s.id === id)) return { kind: 'stair', id }
+  if (scene.railings.some((r) => r.id === id)) return { kind: 'railing', id }
   if (scene.levels.some((l) => l.id === id)) return { kind: 'level', id }
   return null
 }
@@ -110,6 +116,10 @@ export function levelIdOf(scene: SceneGraph, id: string): string | null {
   if (primitive) return primitive.levelId
   const boolNode = scene.booleans.find((b) => b.id === id)
   if (boolNode) return boolNode.levelId
+  const stair = scene.stairs.find((s) => s.id === id)
+  if (stair) return stair.levelId
+  const railing = scene.railings.find((r) => r.id === id)
+  if (railing) return railing.levelId
   const opening = scene.openings.find((o) => o.id === id)
   if (opening) return levelIdOf(scene, opening.hostId)
   const filling = scene.fillings.find((f) => f.id === id)
@@ -547,6 +557,16 @@ export function moveElement(scene: SceneGraph, id: string, delta: Vec2): SceneGr
       const node = scene.booleans.find((x) => x.id === id)!
       return node.operandIds.reduce((acc, operandId) => moveElement(acc, operandId, delta), scene)
     }
+    case 'stair': {
+      const s = scene.stairs.find((x) => x.id === id)!
+      return updateStair(scene, id, {
+        baseline: { start: shift(s.baseline.start, dx, dy), end: shift(s.baseline.end, dx, dy) },
+      })
+    }
+    case 'railing': {
+      const r = scene.railings.find((x) => x.id === id)!
+      return updateRailing(scene, id, { path: r.path.map((p) => shift(p, dx, dy)) })
+    }
     case 'opening':
     case 'filling': {
       // An opening is hosted — dragging it slides it along the wall rather than off it.
@@ -633,6 +653,17 @@ export function transformElement(scene: SceneGraph, id: string, xf: Transform2D)
       // cutter too, or the result changes shape rather than position.
       const node = scene.booleans.find((x) => x.id === id)!
       return node.operandIds.reduce((acc, operandId) => transformElement(acc, operandId, xf), scene)
+    }
+    case 'stair': {
+      // Reuse the line-baseline transform rather than duplicating its math; a stair's baseline
+      // has no `kind` of its own (it is never an arc), so only start/end are kept from the result.
+      const s = scene.stairs.find((x) => x.id === id)!
+      const t = transformBaseline({ kind: 'line', ...s.baseline }, xf)
+      return updateStair(scene, id, { baseline: { start: t.start, end: t.end } })
+    }
+    case 'railing': {
+      const r = scene.railings.find((x) => x.id === id)!
+      return updateRailing(scene, id, { path: r.path.map(p) })
     }
     default:
       return scene
@@ -724,6 +755,20 @@ export function duplicateElement(
       const copy: BooleanNode = { ...node, id: newId('bool'), operandIds: copiedOperandIds }
       return { scene: { ...next, booleans: [...next.booleans, copy] }, id: copy.id }
     }
+    case 'stair': {
+      const s = scene.stairs.find((x) => x.id === id)!
+      const copy: Stair = {
+        ...s,
+        id: newId('st'),
+        baseline: { start: [...s.baseline.start] as Vec2, end: [...s.baseline.end] as Vec2 },
+      }
+      return { scene: { ...scene, stairs: [...scene.stairs, copy] }, id: copy.id }
+    }
+    case 'railing': {
+      const r = scene.railings.find((x) => x.id === id)!
+      const copy: Railing = { ...r, id: newId('rl'), path: r.path.map((p) => [...p] as Vec2) }
+      return { scene: { ...scene, railings: [...scene.railings, copy] }, id: copy.id }
+    }
     default:
       return null
   }
@@ -746,6 +791,10 @@ export function setElementType(scene: SceneGraph, id: string, typeId: string): S
       return updateFurniture(scene, id, { typeId })
     case 'primitive':
       return updatePrimitive(scene, id, { typeId })
+    case 'stair':
+      return updateStair(scene, id, { typeId })
+    case 'railing':
+      return updateRailing(scene, id, { typeId })
     case 'filling':
       return syncOpeningToFilling(updateFilling(scene, id, { typeId }), id)
     default:
@@ -818,6 +867,10 @@ export function deleteElement(scene: SceneGraph, id: string): SceneGraph {
       // Deleting the OPERATION releases its operands rather than destroying them (see
       // `dissolveBooleanNode`), but a node consumed by a parent still has to be pruned from it.
       return pruneBooleanOperand(dissolveBooleanNode(scene, id), id)
+    case 'stair':
+      return { ...scene, stairs: scene.stairs.filter((s) => s.id !== id) }
+    case 'railing':
+      return { ...scene, railings: scene.railings.filter((r) => r.id !== id) }
     case 'level': {
       const doomedWalls = scene.walls.filter((w) => w.levelId === id).map((w) => w.id)
       const doomedOpenings = scene.openings
@@ -838,6 +891,8 @@ export function deleteElement(scene: SceneGraph, id: string): SceneGraph {
         roofs: scene.roofs.filter((r) => r.levelId !== id),
         primitives: scene.primitives.filter((p) => p.levelId !== id),
         booleans: scene.booleans.filter((b) => b.levelId !== id),
+        stairs: scene.stairs.filter((s) => s.levelId !== id),
+        railings: scene.railings.filter((r) => r.levelId !== id),
       }
     }
     default:
@@ -912,6 +967,14 @@ export function elementLabel(scene: SceneGraph, id: string): string {
     case 'boolean': {
       const b = scene.booleans.find((x) => x.id === id)!
       return `${booleanOpLabel(b.op)} (${b.operandIds.length})`
+    }
+    case 'stair': {
+      const s = scene.stairs.find((x) => x.id === id)!
+      return `${typeName(s.typeId)} · ${s.desiredNumberOfRisers} risers`
+    }
+    case 'railing': {
+      const r = scene.railings.find((x) => x.id === id)!
+      return `${typeName(r.typeId)} · ${r.path.length} pts`
     }
   }
 }
@@ -1154,4 +1217,39 @@ export function setRoofUniformEdge(
   const roof = scene.roofs.find((r) => r.id === id)
   if (!roof) return scene
   return updateRoof(scene, id, { edges: roof.edges.map((e) => ({ ...e, ...patch })) })
+}
+
+// ---------------------------------------------------------------------------
+// Stairs (B2)
+// ---------------------------------------------------------------------------
+
+export function addStair(scene: SceneGraph, stair: Stair): SceneGraph {
+  return { ...scene, stairs: [...scene.stairs, stair] }
+}
+
+export function removeStair(scene: SceneGraph, id: string): SceneGraph {
+  return { ...scene, stairs: scene.stairs.filter((s) => s.id !== id) }
+}
+
+export function updateStair(scene: SceneGraph, id: string, patch: Partial<Stair>): SceneGraph {
+  return { ...scene, stairs: scene.stairs.map((s) => (s.id === id ? { ...s, ...patch, id: s.id } : s)) }
+}
+
+// ---------------------------------------------------------------------------
+// Railings (B3)
+// ---------------------------------------------------------------------------
+
+export function addRailing(scene: SceneGraph, railing: Railing): SceneGraph {
+  return { ...scene, railings: [...scene.railings, railing] }
+}
+
+export function removeRailing(scene: SceneGraph, id: string): SceneGraph {
+  return { ...scene, railings: scene.railings.filter((r) => r.id !== id) }
+}
+
+export function updateRailing(scene: SceneGraph, id: string, patch: Partial<Railing>): SceneGraph {
+  return {
+    ...scene,
+    railings: scene.railings.map((r) => (r.id === id ? { ...r, ...patch, id: r.id } : r)),
+  }
 }

@@ -23,7 +23,7 @@ from pydantic import BaseModel, Field
 Vec2 = tuple[float, float]
 Vec3 = tuple[float, float, float]
 
-SCHEMA_VERSION: Final = 6
+SCHEMA_VERSION: Final = 7
 
 # ---------------------------------------------------------------------------
 # Materials
@@ -55,7 +55,17 @@ class MaterialLayer(BaseModel):
 # ---------------------------------------------------------------------------
 
 TypeCategory = Literal[
-    "wall", "door", "window", "slab", "column", "beam", "furniture", "roof", "primitive"
+    "wall",
+    "door",
+    "window",
+    "slab",
+    "column",
+    "beam",
+    "furniture",
+    "roof",
+    "primitive",
+    "stair",
+    "railing",
 ]
 
 
@@ -238,6 +248,33 @@ class PrimitiveTypeDef(BaseModel):
     material: str
 
 
+class StairTypeDef(BaseModel):
+    """A straight stair flight (B2). Shape lives here; risers/rise are per-instance (Stair)."""
+
+    id: str
+    category: Literal["stair"]
+    name: str
+    width: float = Field(gt=0)
+    tread_depth: float = Field(gt=0, alias="treadDepth")
+    material: str
+
+    model_config = {"populate_by_name": True}
+
+
+class RailingTypeDef(BaseModel):
+    """A railing (B3): a continuous top rail plus evenly spaced posts along an open path."""
+
+    id: str
+    category: Literal["railing"]
+    name: str
+    height: float = Field(gt=0)
+    post_thickness: float = Field(gt=0, alias="postThickness")
+    post_spacing: float = Field(gt=0, alias="postSpacing")
+    material: str
+
+    model_config = {"populate_by_name": True}
+
+
 ElementTypeDef = Annotated[
     WallTypeDef
     | DoorTypeDef
@@ -247,7 +284,9 @@ ElementTypeDef = Annotated[
     | BeamTypeDef
     | FurnitureTypeDef
     | RoofTypeDef
-    | PrimitiveTypeDef,
+    | PrimitiveTypeDef
+    | StairTypeDef
+    | RailingTypeDef,
     Field(discriminator="category"),
 ]
 
@@ -292,7 +331,22 @@ class TopUnconnected(BaseModel):
     height: float = Field(gt=0)
 
 
-TopConstraint = Annotated[TopLevelConstraint | TopUnconnected, Field(discriminator="kind")]
+class TopRoofConstraint(BaseModel):
+    """The top follows a roof's underside (B1 wall voiding).
+
+    Only a Wall resolves this to a ramped top (shared/geometry/roof.ts wallRoofRamp); a Column or
+    Room using it just reads the roof's baseHeight as a flat reference.
+    """
+
+    kind: Literal["roof"]
+    roof_id: str = Field(alias="roofId")
+
+    model_config = {"populate_by_name": True}
+
+
+TopConstraint = Annotated[
+    TopLevelConstraint | TopUnconnected | TopRoofConstraint, Field(discriminator="kind")
+]
 
 # ---------------------------------------------------------------------------
 # Walls
@@ -501,6 +555,52 @@ class BooleanNode(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Stairs (B2)
+# ---------------------------------------------------------------------------
+
+
+class StairBaseline(BaseModel):
+    """A straight run in plan; only direction/start matter — length is derived (see Stair)."""
+
+    start: Vec2
+    end: Vec2
+
+
+class Stair(BaseModel):
+    """A straight stair flight.
+
+    `actual_riser_height` is DERIVED from `desired_number_of_risers` and the resolved rise (top
+    minus base) — `shared/geometry/stair.ts` `resolveStair` — and has no field here, matching the
+    TS side: it is never stored, only computed.
+    """
+
+    id: str
+    type_id: str = Field(alias="typeId")
+    level_id: str = Field(alias="levelId")
+    baseline: StairBaseline
+    base_offset: float = Field(alias="baseOffset")
+    top: TopConstraint
+    desired_number_of_risers: int = Field(ge=2, alias="desiredNumberOfRisers")
+
+    model_config = {"populate_by_name": True}
+
+
+# ---------------------------------------------------------------------------
+# Railings (B3)
+# ---------------------------------------------------------------------------
+
+
+class Railing(BaseModel):
+    id: str
+    type_id: str = Field(alias="typeId")
+    level_id: str = Field(alias="levelId")
+    path: list[Vec2] = Field(min_length=2)
+    base_offset: float = Field(alias="baseOffset")
+
+    model_config = {"populate_by_name": True}
+
+
+# ---------------------------------------------------------------------------
 # Rooms & furniture
 # ---------------------------------------------------------------------------
 
@@ -698,7 +798,7 @@ class SceneGraph(BaseModel):
     would pass while the two schemas diverged — the exact failure this file exists to prevent.
     """
 
-    schema_version: Annotated[Literal[6], Field(alias="schemaVersion")] = SCHEMA_VERSION
+    schema_version: Annotated[Literal[7], Field(alias="schemaVersion")] = SCHEMA_VERSION
     project_id: str = Field(alias="projectId")
     units: Units = "m"
     types: list[ElementTypeDef] = []
@@ -720,6 +820,8 @@ class SceneGraph(BaseModel):
     roofs: list[Roof] = []
     primitives: list[Primitive] = []
     booleans: list[BooleanNode] = []
+    stairs: list[Stair] = []
+    railings: list[Railing] = []
 
     model_config = {"populate_by_name": True, "extra": "forbid"}
 
@@ -744,6 +846,14 @@ class SceneGraph(BaseModel):
         t = self.find_type(type_id)
         return t if isinstance(t, PrimitiveTypeDef) else None
 
+    def find_stair_type(self, type_id: str) -> StairTypeDef | None:
+        t = self.find_type(type_id)
+        return t if isinstance(t, StairTypeDef) else None
+
+    def find_railing_type(self, type_id: str) -> RailingTypeDef | None:
+        t = self.find_type(type_id)
+        return t if isinstance(t, RailingTypeDef) else None
+
     def find_level(self, level_id: str) -> Level | None:
         return next((lv for lv in self.levels if lv.id == level_id), None)
 
@@ -751,9 +861,18 @@ class SceneGraph(BaseModel):
         return next((w for w in self.walls if w.id == wall_id), None)
 
     def resolve_top_elevation(self, top: TopConstraint, base_elevation: float) -> float:
-        """Resolve a TopConstraint to an absolute world elevation."""
+        """Resolve a TopConstraint to an absolute world elevation.
+
+        For a roof constraint this is the NOMINAL (unramped) reference elevation — the roof's own
+        datum. The per-thickness ramp a wall additionally follows is a rendering/export concern
+        (`shared/geometry/roof.ts` `wallRoofRamp`) with no TypeScript-side runtime validation
+        counterpart, so it has no Python mirror either — same split as the rest of this file.
+        """
         if isinstance(top, TopUnconnected):
             return base_elevation + top.height
+        if isinstance(top, TopRoofConstraint):
+            roof = next((r for r in self.roofs if r.id == top.roof_id), None)
+            return roof.base_height if roof is not None else base_elevation + 2.8
         level = self.find_level(top.level_id)
         if level is None:
             # Orphaned constraint — fall back to a sane storey height, as scene.ts does.
@@ -775,6 +894,8 @@ ELEMENT_COLLECTIONS: Final[tuple[str, ...]] = (
     "roofs",
     "primitives",
     "booleans",
+    "stairs",
+    "railings",
 )
 
 #: Collections that hold view-scoped annotation objects.
@@ -807,6 +928,8 @@ class SceneDiff(BaseModel):
     roofs: list[Roof] | None = None
     primitives: list[Primitive] | None = None
     booleans: list[BooleanNode] | None = None
+    stairs: list[Stair] | None = None
+    railings: list[Railing] | None = None
 
     model_config = {"populate_by_name": True}
 

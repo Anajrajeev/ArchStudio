@@ -31,6 +31,8 @@ import {
   IconColumnGrid,
   IconPrimitive,
   IconBoolean,
+  IconStair,
+  IconRailing,
 } from './Icons'
 import { freePrimitives, rootBooleanNodes } from '../../../shared/geometry/booleanTree'
 
@@ -285,6 +287,8 @@ const KIND_ICON: Partial<Record<ElementKind, React.ReactNode>> = {
   columnGrid: <IconColumnGrid />,
   primitive: <IconPrimitive />,
   boolean: <IconBoolean />,
+  stair: <IconStair />,
+  railing: <IconRailing />,
 }
 
 function ModelTreeSection() {
@@ -371,6 +375,18 @@ function ModelTreeSection() {
         ids: rootBooleanNodes(scene)
           .filter((b) => b.levelId === activeLevelId)
           .map((b) => b.id),
+      },
+      {
+        key: 'stairs',
+        label: t('tree.stairs'),
+        kind: 'stair' as ElementKind,
+        ids: scene.stairs.filter((s) => s.levelId === activeLevelId).map((s) => s.id),
+      },
+      {
+        key: 'railings',
+        label: t('tree.railings'),
+        kind: 'railing' as ElementKind,
+        ids: scene.railings.filter((r) => r.levelId === activeLevelId).map((r) => r.id),
       },
     ].filter((g) => g.ids.length > 0)
   }, [scene, activeLevelId, t])

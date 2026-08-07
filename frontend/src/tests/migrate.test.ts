@@ -468,12 +468,115 @@ describe('the full v1 → v6 chain reaches primitives', () => {
   const migrated = migrateScene(V1)
 
   it('arrives at v6 with both new collections', () => {
-    expect(migrated.schemaVersion).toBe(SCHEMA_VERSION)
     expect(migrated.primitives).toEqual([])
     expect(migrated.booleans).toEqual([])
   })
 
   it('still preserves the original v1 geometry after five migrations', () => {
+    expect(migrated.walls).toHaveLength(3)
+    expect(migrated.openings).toHaveLength(2)
+    expect(migrated.fillings).toHaveLength(2)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// v6 → v7 (stairs and railings, B2/B3)
+// ---------------------------------------------------------------------------
+
+/** A representative v6 document (no stairs/railings). */
+const V6 = {
+  schemaVersion: 6,
+  projectId: 'proj-v6',
+  units: 'm',
+  types: [
+    {
+      id: 'wt-custom',
+      category: 'wall' as const,
+      name: 'Custom wall',
+      function: 'interior' as const,
+      layers: [{ material: 'mat-concrete', thickness: 0.15, function: 'structure' as const }],
+    },
+  ],
+  levels: [{ id: 'lv1', name: 'Ground', elevation: 0, height: 3, isBuildingStory: true, computationHeight: 0 }],
+  walls: [],
+  openings: [],
+  fillings: [],
+  slabs: [],
+  columns: [],
+  beams: [],
+  rooms: [],
+  furniture: [],
+  materials: [],
+  views: [],
+  dimensions: [],
+  annotations: [],
+  roomTags: [],
+  columnGrids: [],
+  roofs: [],
+  primitives: [],
+  booleans: [],
+}
+
+describe('migrateScene v6 → v7', () => {
+  const migrated = migrateScene(V6)
+
+  it('bumps to the current version and adds stairs + railings', () => {
+    expect(migrated.schemaVersion).toBe(SCHEMA_VERSION)
+    expect(migrated.stairs).toEqual([])
+    expect(migrated.railings).toEqual([])
+  })
+
+  it('preserves existing v6 fields', () => {
+    expect(migrated.projectId).toBe('proj-v6')
+    expect(migrated.levels).toHaveLength(1)
+  })
+
+  it("keeps the document's own types", () => {
+    expect(migrated.types.find((t) => t.id === 'wt-custom')?.name).toBe('Custom wall')
+  })
+
+  it('back-fills the default stair and railing types so both tools are usable on an old project', () => {
+    // Without this, every pre-v7 document would open with the stair/railing tools refusing —
+    // same reasoning as the v5→v6 primitive back-fill above.
+    const categories = migrated.types.map((t) => t.category)
+    expect(categories).toContain('stair')
+    expect(categories).toContain('railing')
+  })
+
+  it('does not duplicate a type the document already had', () => {
+    const withStair = {
+      ...V6,
+      types: [
+        ...V6.types,
+        {
+          id: 'st-stair-280',
+          category: 'stair' as const,
+          name: 'My own stair',
+          width: 2,
+          treadDepth: 0.3,
+          material: 'mat-oak',
+        },
+      ],
+    }
+    const result = migrateScene(withStair)
+    const matches = result.types.filter((t) => t.id === 'st-stair-280')
+    expect(matches).toHaveLength(1)
+    expect(matches[0].name).toBe('My own stair')
+  })
+})
+
+describe('the full v1 → v7 chain reaches stairs and railings', () => {
+  const migrated = migrateScene(V1)
+
+  it('arrives at the current version with every new collection empty', () => {
+    expect(migrated.schemaVersion).toBe(SCHEMA_VERSION)
+    expect(migrated.primitives).toEqual([])
+    expect(migrated.booleans).toEqual([])
+    expect(migrated.stairs).toEqual([])
+    expect(migrated.railings).toEqual([])
+  })
+
+  it('still preserves the original v1 geometry after six migrations', () => {
     expect(migrated.walls).toHaveLength(3)
     expect(migrated.openings).toHaveLength(2)
     expect(migrated.fillings).toHaveLength(2)

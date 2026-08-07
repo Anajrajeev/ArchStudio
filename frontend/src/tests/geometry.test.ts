@@ -20,6 +20,8 @@ import {
   resolveWall,
   resolveSlab,
   wallSolidBoxes,
+  boxCorners,
+  boxToTriMesh,
   columnSolid,
   beamSolid,
   validateWall,
@@ -29,9 +31,31 @@ import {
   rotationYFor,
   type Box3D,
 } from '../../../shared/geometry/index'
+import { defaultRoof } from '../../../shared/geometry/roof'
+import { meshVolume, isWatertight } from '../../../shared/geometry/primitives'
 import { assemblyThickness, type Vec2 } from '../../../shared/types/scene'
-import { addSlab, addColumn, addBeam, updateWall, updateOpening } from '../scene/mutations'
+import { addSlab, addColumn, addBeam, addWall, addRoof, updateWall, updateOpening } from '../scene/mutations'
 import { fixture, withWall, withDoor } from './helpers'
+
+/** A wall on levelId sitting exactly on a roof's own eave line — B1 wall voiding fixture. */
+function wallOnRoofEave() {
+  const f = fixture()
+  const footprint: Vec2[] = [
+    [0, 0],
+    [6, 0],
+    [6, 4],
+    [0, 4],
+  ]
+  const roof = defaultRoof('rf1', 'rt-tile-250', f.levelId, footprint, 3)
+  const withRoof = addRoof(f.scene, roof)
+  const w = addWall(withRoof, {
+    levelId: f.levelId,
+    typeId: 'wt-ext-200',
+    baseline: { kind: 'line', start: [0, 0], end: [6, 0] },
+  })
+  const scene = updateWall(w.scene, w.id, { top: { kind: 'roof', roofId: roof.id } })
+  return { scene, wallId: w.id, roofId: roof.id }
+}
 
 // ---------------------------------------------------------------------------
 // 2D primitives
@@ -563,5 +587,148 @@ describe('validation', () => {
     const { scene, openingId } = withDoor()
     const bad = updateOpening(scene, openingId, { width: 0, height: -1, offset: -0.5 })
     expect(validateOpening(bad, bad.openings.find((o) => o.id === openingId)!).length).toBeGreaterThanOrEqual(3)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Wall voiding (B1) — see DECISIONS.md D-020
+// ---------------------------------------------------------------------------
+
+describe('resolveWall — roof voiding', () => {
+  it('resolves topElevation to the roof baseHeight and populates roofRamp', () => {
+    const { scene, wallId } = wallOnRoofEave()
+    const wall = scene.walls.find((w) => w.id === wallId)!
+    const resolved = resolveWall(scene, wall)!
+    expect(resolved.topElevation).toBeCloseTo(3)
+    expect(resolved.roofRamp).toBeDefined()
+    // Symmetric about the centreline, always — see wallRoofRamp's own tests for the sign.
+    expect(resolved.roofRamp!.frontDelta + resolved.roofRamp!.backDelta).toBeCloseTo(0)
+  })
+
+  it('leaves roofRamp undefined for a wall that does not qualify, rather than throwing', () => {
+    const { scene, wallId } = wallOnRoofEave()
+    const offTrack = updateWall(scene, wallId, {
+      baseline: { kind: 'line', start: [1, 1], end: [5, 1] },
+    })
+    const wall = offTrack.walls.find((w) => w.id === wallId)!
+    const resolved = resolveWall(offTrack, wall)!
+    expect(resolved.roofRamp).toBeUndefined()
+    expect(resolved.height).toBeGreaterThan(0) // still resolves — just flat
+  })
+
+  it('leaves roofRamp undefined when the roof id is dangling', () => {
+    const { scene, wallId } = wallOnRoofEave()
+    const dangling = updateWall(scene, wallId, { top: { kind: 'roof', roofId: 'gone' } })
+    const wall = dangling.walls.find((w) => w.id === wallId)!
+    expect(resolveWall(dangling, wall)!.roofRamp).toBeUndefined()
+  })
+})
+
+describe('wallSolidBoxes — roof voiding', () => {
+  const topOf = (b: Box3D): number => b.center[1] + b.size[1] / 2
+
+  it('ramps the chunk that reaches the wall’s own top', () => {
+    const { scene, wallId } = wallOnRoofEave()
+    const wall = scene.walls.find((w) => w.id === wallId)!
+    const resolved = resolveWall(scene, wall)!
+    const boxes = wallSolidBoxes(resolved, [])
+    expect(boxes).toHaveLength(1)
+    expect(boxes[0].topRamp).toBeDefined()
+    expect(boxes[0].topRamp).not.toBe(0)
+  })
+
+  it('does NOT ramp a below-sill or lintel chunk — only one reaching the top does', () => {
+    const { scene, wallId } = wallOnRoofEave()
+    const wall = scene.walls.find((w) => w.id === wallId)!
+    const resolved = resolveWall(scene, wall)!
+    const boxes = wallSolidBoxes(resolved, [
+      {
+        id: 'o1',
+        hostId: wallId,
+        offset: 2,
+        width: 1,
+        height: 1.2,
+        sillHeight: 0.5,
+        predefinedType: 'opening',
+        depth: null,
+      },
+    ])
+    const nominalTop = resolved.baseElevation + resolved.height
+    const reachesTop = boxes.filter((b) => Math.abs(topOf(b) - nominalTop) < 1e-6)
+    const short = boxes.filter((b) => Math.abs(topOf(b) - nominalTop) >= 1e-6)
+    expect(reachesTop.length).toBeGreaterThan(0)
+    expect(short.length).toBeGreaterThan(0)
+    expect(reachesTop.every((b) => b.topRamp !== undefined)).toBe(true)
+    expect(short.every((b) => b.topRamp === undefined)).toBe(true)
+  })
+
+  it('an ordinary wall never gets a topRamp', () => {
+    const { scene, wallId } = withWall()
+    const resolved = resolveWall(scene, scene.walls.find((w) => w.id === wallId)!)!
+    const boxes = wallSolidBoxes(resolved, [])
+    expect(boxes.every((b) => b.topRamp === undefined)).toBe(true)
+  })
+})
+
+describe('validateWall — roof voiding', () => {
+  it('a correctly voided wall has no errors', () => {
+    const { scene, wallId } = wallOnRoofEave()
+    expect(validateWall(scene, scene.walls.find((w) => w.id === wallId)!)).toEqual([])
+  })
+
+  it('flags an unknown roof id', () => {
+    const { scene, wallId } = wallOnRoofEave()
+    const bad = updateWall(scene, wallId, { top: { kind: 'roof', roofId: 'nope' } })
+    const errors = validateWall(bad, bad.walls.find((w) => w.id === wallId)!)
+    expect(errors.some((e) => /unknown roof/i.test(e))).toBe(true)
+  })
+
+  it('flags a wall attached to a roof it does not run under', () => {
+    const { scene, wallId } = wallOnRoofEave()
+    const offTrack = updateWall(scene, wallId, {
+      baseline: { kind: 'line', start: [1, 1], end: [5, 1] },
+    })
+    const errors = validateWall(offTrack, offTrack.walls.find((w) => w.id === wallId)!)
+    expect(errors.some((e) => /eave/i.test(e))).toBe(true)
+  })
+})
+
+describe('boxCorners — topRamp', () => {
+  it('splits the top face across local Z and leaves the bottom flat', () => {
+    const box: Box3D = { center: [0, 1, 0], size: [2, 2, 1], rotationY: 0, topRamp: 0.4 }
+    const corners = boxCorners(box)
+    corners.slice(0, 4).forEach((c) => expect(c[1]).toBeCloseTo(0))
+    // 4,5 are the local -Z ("front") top corners; 6,7 are local +Z ("back").
+    expect(corners[4][1]).toBeCloseTo(1.8)
+    expect(corners[5][1]).toBeCloseTo(1.8)
+    expect(corners[6][1]).toBeCloseTo(2.2)
+    expect(corners[7][1]).toBeCloseTo(2.2)
+  })
+
+  it('an unset topRamp is exactly the old flat-top behaviour', () => {
+    const box: Box3D = { center: [0, 1, 0], size: [2, 2, 1], rotationY: 0 }
+    boxCorners(box)
+      .slice(4)
+      .forEach((c) => expect(c[1]).toBeCloseTo(2))
+  })
+})
+
+describe('boxToTriMesh', () => {
+  it('is watertight and its volume equals length·height·thickness exactly, ramped or not', () => {
+    const flat: Box3D = { center: [0, 1, 0], size: [2, 2, 1], rotationY: 0 }
+    const ramped: Box3D = { ...flat, topRamp: 0.6 }
+    for (const box of [flat, ramped]) {
+      const mesh = boxToTriMesh(box)
+      expect(isWatertight(mesh)).toBe(true)
+      // A symmetric ramp does not change the mean height, so volume is unaffected by it.
+      expect(meshVolume(mesh)).toBeCloseTo(box.size[0] * box.size[1] * box.size[2], 6)
+    }
+  })
+
+  it('stays watertight with a positive volume under rotation', () => {
+    const box: Box3D = { center: [1, 0.5, 2], size: [3, 1, 0.4], rotationY: Math.PI / 5, topRamp: 0.1 }
+    const mesh = boxToTriMesh(box)
+    expect(isWatertight(mesh)).toBe(true)
+    expect(meshVolume(mesh)).toBeCloseTo(3 * 1 * 0.4, 6)
   })
 })

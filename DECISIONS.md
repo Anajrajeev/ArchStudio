@@ -391,3 +391,144 @@ that no export contained — a pre-existing violation of the one-geometry rule (
 renderer but not the export path). Roofs now export from the same `resolveRoof` the viewport uses.
 
 ---
+
+## D-020 — Wall voiding: a wall on an eave line gets a thickness-only ramp, not a per-point sample (Phase 1B-ii, B1)
+
+**Decision:** A wall's `TopConstraint` gains a third variant, `{ kind: 'roof'; roofId: string }`.
+`shared/geometry/roof.ts`'s new `wallRoofRamp(roof, centerline, thickness)` resolves it to a
+**front/back delta pair** — how much lower the wall's exterior-facing top edge sits and how much
+higher its interior-facing edge sits, both relative to `roof.baseHeight` — rather than sampling the
+roof's height at points along the wall's length. `shared/geometry/index.ts`'s `Box3D` gains an
+optional `topRamp` field consumed only by `wallSolidBoxes`, and only for the chunk that reaches the
+wall's own top (a lintel or under-sill section stays flat, since it never reaches the roof).
+
+**Reasoning:** A roof face's height is `base + v·tanA`, where `v` is the perpendicular distance
+INTO the roof from that edge's own eave (D-018's closed-form hip/pyramid geometry). A wall running
+ALONG a footprint edge sits at one fixed `v` for its entire length — only the wall's *thickness*
+moves it in `v` — so the top height is constant along the run and varies linearly only across the
+thickness. That is exactly a wedge cross-section (which D-018 anticipated in its own consequence
+note), not a profile needing per-point sampling along the wall. Reducing to two numbers instead of
+a sampled curve is not a shortcut here — it is the exact answer for the only case the roof geometry
+itself resolves.
+
+**Scope, deliberately narrow (D-018's own rule, applied again):** `wallRoofRamp` refuses (a
+`RoofError`, never a guess) a curved wall, or one that is not collinear with a footprint edge within
+1 cm. A wall running into the roof at an angle, or one meeting a future general (non-rectangular,
+per-edge-angle) roof, is out of scope until that roof shape itself is. `validateWall` surfaces the
+refusal as a message on the wall, exactly like every other "refuse and explain" case in this
+codebase.
+
+**The verb, not a drawing tool:** attaching walls to a roof is `editor/roofVoid.ts`'s
+`voidWallsToRoof`, invoked from the Modify panel when the selection is one roof plus one or more
+walls — mirroring the boolean verbs (D-019), which also act on an existing selection rather than
+collecting clicks. Every wall is validated *before* any of them are changed, so a selection with one
+disqualifying wall refuses the whole batch instead of leaving a half-attached mix. Detaching is not
+a verb: it is just switching a wall's `TopConstraint` back to `unconnected`, which the Properties
+panel already does for every other wall.
+
+**Rendering/export:** a flat-topped box is completely unaffected — `topRamp` is undefined for it,
+and it still renders as `THREE.BoxGeometry` exactly as before. Only a ramped chunk builds through
+the new `boxToTriMesh` (pure, no Three) plus a newly-shared `triMeshToGeometry` (moved out of
+`evaluateBoolean.ts` into `scene/geometryUtils.ts` so it has one implementation, not two), used by
+both the viewport and the exporter — the same one-geometry discipline as `wallSolidBoxes` itself.
+
+**Python parity:** `shared/python/models.py` gained the matching `TopRoofConstraint` model, since a
+wall using the new variant would otherwise be rejected by the backend's `extra="forbid"` schema
+(E5). The ramp itself has no Python mirror — like the rest of `shared/geometry/`, it is a
+rendering/export concern with no server-side validation counterpart.
+
+**Alternative considered:** sample the roof's height at several points along the wall's length
+(reusing the point-in-polygon-plus-plane-equation approach that would be needed for a wall running
+*into* the roof, e.g. a gable end or an interior partition). Rejected for this pass — it is strictly
+more general than any wall the current v1 roof geometry actually produces a slope for along a wall's
+length, so it would be complexity paid for a case that cannot occur yet. Revisit if a future roof
+shape (a gable, or a general per-edge-angle solver) introduces walls whose height genuinely varies
+along their run, not just across their thickness.
+
+---
+
+## D-021 — Stairs and railings: solid-box decomposition, reusing TopConstraint and the verb pattern (Phase 1B-ii, B2/B3)
+
+**Decision:** Schema v7 adds two element types, both decomposed into axis-aligned `Box3D`s — the
+same representation `wallSolidBoxes` already uses, so their renderers and exporter paths are the
+same shape of code as everything else, not a new rendering primitive.
+
+**Stairs (B2):** a straight flight only (v1). A `Stair` stores `desiredNumberOfRisers`;
+`actualRiserHeight` is **derived** from it and the resolved rise (`top` minus the base) in
+`shared/geometry/stair.ts`'s `resolveStair`, exactly mirroring how a wall's height is derived
+rather than stored — moving the level a stair lands on keeps the flight consistent instead of
+drifting out of sync with a separately-stored number. `Stair.top` reuses the **same
+`TopConstraint`** union walls and columns already use (including the roof variant D-020 just
+added), rather than a bespoke "lands on this level" field — one less concept to learn, and a
+future "attach stair to roof" case, if it ever comes up, needs no schema change.
+
+Geometry is one SOLID box per step: step `i` spans `[i·treadDepth, (i+1)·treadDepth]` horizontally
+and `[0, (i+1)·actualRiserHeight]` vertically — each box reaches all the way to the base, so the
+boxes stack like a real solid-core stair (concrete/masonry) rather than floating treads. This is
+deliberately the simplest correct model; open-riser/stringer stairs are a later phase.
+
+Blondel's comfort formula (`2·riser + tread` should fall in **57–66 cm**) is *feedback*, not a
+hard refusal — `validateStair` reports it exactly like every other advisory message in this
+codebase. An uncomfortable stair still exists and still renders; comfort is a design choice, not a
+geometric impossibility, unlike a roof with mismatched angles (D-018), which renders nothing.
+
+**Railings (B3):** an open polyline path (`Vec2[]`, ≥ 2 points) rather than a single straight run,
+because a railing routinely needs to turn a corner (wrapping a stair, a balcony edge) and a
+polyline of straight segments has no ambiguity to refuse — unlike a roof or a voided wall, no
+"refuse the general case" carve-out is needed. Decomposed into one rail box per path segment plus
+vertical posts every `postSpacing`, with a post **always** forced at the exact path end — even if
+it lands short of a full spacing interval — so the last stretch of rail is never unsupported.
+
+**New editor surface, reusing established patterns rather than inventing new ones:**
+- Both get the standard Type → Instance split (D-009): `StairTypeDef`/`RailingTypeDef` hold shape
+  (tread depth, width / rail height, post spacing); instances hold placement.
+- The stair tool is a plain 2-click tool, identical in shape to `beam`.
+- The railing tool needed a genuinely new *class* of tool: an **open path**, collecting an
+  unbounded number of points like `slab`/`room` but never closing on the first point, since a path
+  is not a boundary. `editor/tools.ts` gets `isPathTool`, finishing on **Enter** (≥ 2 points)
+  exactly where a loop tool would close on a click; `Escape`/`Backspace` needed no change.
+
+**Migration:** purely additive (`stairs: []`, `railings: []`), with the default stair/railing
+types back-filled into `types[]` on the way through — the same reasoning as v5→v6's primitive
+back-fill (D-019): without it, every pre-v7 project would open with both tools permanently
+refusing for want of a type to place.
+
+**Python parity landed in the same pass, not as a follow-up:** `StairTypeDef`, `RailingTypeDef`,
+`Stair`, `Railing` all went into `shared/python/models.py` alongside the TS types, and the golden
+fixtures (E5) were extended to exercise both. A schema change is not "done" until both sides — and
+the fixtures locking them together — agree.
+
+**Alternative considered (railings):** balusters as a fixed 2D symbol swept along the path in the
+exporter only, keeping the *scene graph* free of per-post geometry. Rejected: it would mean the
+viewport and the exporter compute posts independently, exactly the two-source-of-truth risk D-008
+exists to rule out. Pure box decomposition in `shared/geometry/railing.ts`, called by both, avoids
+that outright.
+
+---
+
+## E1 — 60 fps performance target: measured (Phase 1B-ii)
+
+**Finding:** `frontend/src/scene/stressScene.ts` generates a deterministic 3-storey scene (a 4×3
+grid of rooms per floor, 31 walls/floor = 93 walls total, 14 furniture items/floor = 42 total) via
+the same `addLevel`/`addWall`/`addFurniture` mutations the editor itself uses, so it stresses
+exactly the real rendering path. Loaded through the dev-only debug bridge
+(`window.__archstudio.loadStressScene()`) since there is no save/load yet (Phase 2).
+
+Measured in the live browser, all 3 storeys visible at once (the default "ghost levels below"
+view — the realistic worst case, not an artificially reduced one), camera static: **~60.0 fps
+average, ~58 fps at the 95th percentile, over 480 frames (8 s)**. One outlier frame dropped to
+~35 fps momentarily (a single spike, not sustained) — worth watching if it recurs once real
+projects are larger, but not a target miss on its own.
+
+**Verdict: the 60 fps target is met for the specified stress scene, unmeasured before this pass.**
+No optimization work is indicated yet; `window.__archstudio.sampleFrameTimes(seconds)` (added
+alongside `loadStressScene`) is left in place as a permanent, dev-only, zero-cost-in-production
+harness for re-measuring after future scene-size growth or rendering changes, rather than a
+one-off script that would have to be rebuilt next time.
+
+**Not measured (out of scope for this pass, noted rather than silently skipped):** frame time
+while the camera is actively orbiting/panning, and behind a plan-view orthographic camera. Static
+3D was the case E1 named explicitly; a moving-camera and plan-view pass would be a reasonable
+follow-up before any Phase 7 optimization work, since draw-call patterns can differ.
+
+---

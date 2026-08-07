@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 6,
+  "schemaVersion": 7,
   "projectId": "fixture-project",
   "units": "m",
   "types": [
@@ -190,6 +190,23 @@
         "tubularSegments": 32
       },
       "material": "mat-steel"
+    },
+    {
+      "id": "stt-1",
+      "category": "stair",
+      "name": "Stair",
+      "width": 1,
+      "treadDepth": 0.28,
+      "material": "mat-oak"
+    },
+    {
+      "id": "rlt-1",
+      "category": "railing",
+      "name": "Railing",
+      "height": 0.9,
+      "postThickness": 0.04,
+      "postSpacing": 1,
+      "material": "mat-steel"
     }
   ],
   "levels": [
@@ -259,6 +276,30 @@
       },
       "locationLine": "finish-exterior",
       "flipped": true,
+      "roomBounding": true
+    },
+    {
+      "id": "w3",
+      "typeId": "wt-1",
+      "levelId": "lv2",
+      "baseline": {
+        "kind": "line",
+        "start": [
+          0,
+          0
+        ],
+        "end": [
+          6,
+          0
+        ]
+      },
+      "baseOffset": 0,
+      "top": {
+        "kind": "roof",
+        "roofId": "rf1"
+      },
+      "locationLine": "centerline",
+      "flipped": false,
       "roomBounding": true
     }
   ],
@@ -707,6 +748,52 @@
         "bool1",
         "pr3"
       ]
+    }
+  ],
+  "stairs": [
+    {
+      "id": "stair1",
+      "typeId": "stt-1",
+      "levelId": "lv1",
+      "baseline": {
+        "start": [
+          10,
+          0
+        ],
+        "end": [
+          10,
+          -3
+        ]
+      },
+      "baseOffset": 0,
+      "top": {
+        "kind": "level",
+        "levelId": "lv2",
+        "offset": 0
+      },
+      "desiredNumberOfRisers": 17
+    }
+  ],
+  "railings": [
+    {
+      "id": "railing1",
+      "typeId": "rlt-1",
+      "levelId": "lv1",
+      "path": [
+        [
+          10,
+          -3
+        ],
+        [
+          11,
+          -3
+        ],
+        [
+          11,
+          -4
+        ]
+      ],
+      "baseOffset": 0
     }
   ]
 }

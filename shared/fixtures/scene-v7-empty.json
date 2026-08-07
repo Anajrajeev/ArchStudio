@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 6,
+  "schemaVersion": 7,
   "projectId": "fixture-project",
   "units": "m",
   "types": [
@@ -212,6 +212,23 @@
         "tubularSegments": 32
       },
       "material": "mat-steel"
+    },
+    {
+      "id": "st-stair-280",
+      "category": "stair",
+      "name": "Stair — 1000mm wide, 280mm tread",
+      "width": 1,
+      "treadDepth": 0.28,
+      "material": "mat-oak"
+    },
+    {
+      "id": "rl-standard",
+      "category": "railing",
+      "name": "Railing — 900mm",
+      "height": 0.9,
+      "postThickness": 0.04,
+      "postSpacing": 1,
+      "material": "mat-steel"
     }
   ],
   "levels": [],
@@ -280,5 +297,7 @@
   "columnGrids": [],
   "roofs": [],
   "primitives": [],
-  "booleans": []
+  "booleans": [],
+  "stairs": [],
+  "railings": []
 }

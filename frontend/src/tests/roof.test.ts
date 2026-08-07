@@ -7,8 +7,9 @@ import {
   resolveRoof,
   isRoofError,
   defaultRoof,
+  wallRoofRamp,
 } from '../../../shared/geometry/roof'
-import type { Roof, Vec2 } from '../../../shared/types/scene'
+import type { Baseline, Roof, Vec2 } from '../../../shared/types/scene'
 
 const DEG = Math.PI / 180
 
@@ -209,5 +210,73 @@ describe('defaultRoof', () => {
     expect(roof.edges.every((e) => e.angle === 30)).toBe(true)
     const r = resolveRoof(roof)
     expect(isRoofError(r)).toBe(false)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// wallRoofRamp (B1 wall voiding, D-020)
+// ---------------------------------------------------------------------------
+
+function line(start: Vec2, end: Vec2): Baseline {
+  return { kind: 'line', start, end }
+}
+
+describe('wallRoofRamp', () => {
+  // 6x4 footprint, 45deg so tan(A) = 1 exactly — every delta is just half the thickness.
+  const roof = makeRoof(rect(6, 4), 45, 0, 3)
+
+  it('a wall on the near edge ramps: exterior side down, interior side up', () => {
+    const ramp = wallRoofRamp(roof, line([0, 0], [6, 0]), 0.2)
+    if (isRoofError(ramp)) throw new Error(ramp.error)
+    expect(ramp.centerline).toBe(3)
+    // thickness/2 * tanA = 0.1 * 1 = 0.1. The centroid (3,2) is at +y from this wall (y=0), and
+    // perpendicular(dir) for dir=(1,0) is (0,1) — pointing straight at the centroid — so THAT
+    // side (the wall's local "back") is the one that rises.
+    expect(ramp.backDelta).toBeCloseTo(0.1)
+    expect(ramp.frontDelta).toBeCloseTo(-0.1)
+  })
+
+  it('the far edge ramps the same way relative to its own centroid direction', () => {
+    // Wound the opposite way (start at the far corner), so this checks the sign rule is not
+    // accidentally tied to a fixed edge index or a fixed winding direction.
+    const ramp = wallRoofRamp(roof, line([6, 4], [0, 4]), 0.2)
+    if (isRoofError(ramp)) throw new Error(ramp.error)
+    expect(ramp.backDelta).toBeCloseTo(0.1)
+    expect(ramp.frontDelta).toBeCloseTo(-0.1)
+  })
+
+  it('deltas are always symmetric about the centreline, regardless of thickness', () => {
+    const ramp = wallRoofRamp(roof, line([0, 0], [6, 0]), 0.5)
+    if (isRoofError(ramp)) throw new Error(ramp.error)
+    expect(ramp.frontDelta + ramp.backDelta).toBeCloseTo(0)
+    expect(ramp.backDelta).toBeCloseTo(0.25) // 0.25 * tan(45) = 0.25
+  })
+
+  it('a wall shorter than the edge, but still collinear with it, still qualifies', () => {
+    const ramp = wallRoofRamp(roof, line([1, 0], [4, 0]), 0.2)
+    expect(isRoofError(ramp)).toBe(false)
+  })
+
+  it('refuses a curved wall rather than guessing at a slope', () => {
+    const ramp = wallRoofRamp(roof, { kind: 'arc', start: [0, 0], end: [6, 0], bulge: 0.2 }, 0.2)
+    expect(isRoofError(ramp)).toBe(true)
+    if (isRoofError(ramp)) expect(ramp.error).toMatch(/curved/i)
+  })
+
+  it('refuses a wall that does not run along any eave line', () => {
+    const ramp = wallRoofRamp(roof, line([1, 1], [5, 1]), 0.2)
+    expect(isRoofError(ramp)).toBe(true)
+    if (isRoofError(ramp)) expect(ramp.error).toMatch(/eave/i)
+  })
+
+  it('refuses a wall parallel to an edge but offset from it', () => {
+    const ramp = wallRoofRamp(roof, line([0, 1], [6, 1]), 0.2)
+    expect(isRoofError(ramp)).toBe(true)
+  })
+
+  it('propagates a roof resolution error rather than producing a ramp for an invalid roof', () => {
+    const badRoof = makeRoof([[0, 0], [5, 1], [6, 4], [0, 4]], 45)
+    const ramp = wallRoofRamp(badRoof, line([0, 0], [5, 1]), 0.2)
+    expect(isRoofError(ramp)).toBe(true)
   })
 })

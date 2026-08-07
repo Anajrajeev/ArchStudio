@@ -30,6 +30,7 @@ import {
   buildModify,
   isHostedTool,
   isLoopTool,
+  isPathTool,
   isModifyTool,
   isPairTool,
   modifyHint,
@@ -199,6 +200,13 @@ export default function Interaction() {
           commitActiveTool(s.points)
           return
         }
+        s.addPoint(r.point)
+        return
+      }
+
+      // Path tools (B3): an OPEN polyline. Every click just adds a point — there is no "closing"
+      // click to detect, since a path is not a boundary. Enter (in App.tsx) commits it.
+      if (isPathTool(s.tool)) {
         s.addPoint(r.point)
         return
       }

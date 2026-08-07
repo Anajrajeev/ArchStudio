@@ -5,7 +5,7 @@
  * See DECISIONS.md D-008.
  */
 import { useEffect, useMemo, useRef } from 'react'
-import { Canvas, useThree, type ThreeEvent } from '@react-three/fiber'
+import { Canvas, useThree, useFrame, type ThreeEvent } from '@react-three/fiber'
 import { OrbitControls, GizmoHelper, GizmoViewcube } from '@react-three/drei'
 import * as THREE from 'three'
 import { findLevel } from '../../../shared/types/scene'
@@ -19,9 +19,12 @@ import Handles from './Handles'
 import { Walls, Fillings, Slabs, Rooms, Columns, Beams, Furniture, type RenderOpts } from './Elements'
 import { Roofs } from './Roofs'
 import { Primitives } from './Primitives'
+import { Stairs } from './Stairs'
+import { Railings } from './Railings'
 import Dimensions from './Dimensions'
 import Annotations from './Annotations'
 import ColumnGrids from './ColumnGrids'
+import { generateStressScene } from '../scene/stressScene'
 
 export default function Viewport() {
   const theme = useCanvasTheme()
@@ -315,6 +318,8 @@ function SceneContent({ theme }: { theme: CanvasTheme }) {
             <Furniture opts={opts} levelId={level.id} />
             <Roofs opts={opts} levelId={level.id} />
             <Primitives opts={opts} levelId={level.id} />
+            <Stairs opts={opts} levelId={level.id} />
+            <Railings opts={opts} levelId={level.id} />
           </ClippedGroup>
         )
       })}
@@ -326,9 +331,28 @@ function SceneContent({ theme }: { theme: CanvasTheme }) {
  * Dev-only bridge exposing the r3f state on `window.__archstudio` so the render pipeline can be
  * inspected objectively (draw calls, camera, scene contents) instead of guessed at from a
  * screenshot. Stripped from production builds.
+ *
+ * Also the harness for E1 (the 60 fps performance target): `loadStressScene()` loads the
+ * generated 3-storey / 90-wall / 42-furniture scene from `scene/stressScene.ts` — there is no
+ * save/load yet (Phase 2), so a dev console call is the only way to get it into a running editor
+ * — and `sampleFrameTimes(seconds)` measures real per-frame deltas via `useFrame`, which fires on
+ * every rendered frame regardless of whether the camera is moving (the Canvas here uses r3f's
+ * default `frameloop="always"`, not `"demand"`), so an idle stress scene still gets measured
+ * rather than silently reporting nothing.
  */
 function DebugBridge() {
   const state = useThree()
+  const frameDeltas = useRef<number[]>([])
+  const sampling = useRef(false)
+  const lastFrameAt = useRef(0)
+
+  useFrame(() => {
+    if (!sampling.current) return
+    const now = performance.now()
+    if (lastFrameAt.current > 0) frameDeltas.current.push(now - lastFrameAt.current)
+    lastFrameAt.current = now
+  })
+
   useEffect(() => {
     if (!import.meta.env.DEV) return
     ;(window as unknown as { __archstudio?: unknown }).__archstudio = {
@@ -344,6 +368,35 @@ function DebugBridge() {
       get size() {
         return state.size
       },
+      loadStressScene: () => {
+        useEditor.getState().loadScene(generateStressScene())
+      },
+      sampleFrameTimes: (seconds = 5) =>
+        new Promise((resolve) => {
+          frameDeltas.current = []
+          lastFrameAt.current = 0
+          sampling.current = true
+          setTimeout(() => {
+            sampling.current = false
+            const deltas = frameDeltas.current
+            const frames = deltas.length
+            if (frames === 0) {
+              resolve({ frames: 0, avgFps: 0, minFps: 0, p95Ms: 0, avgMs: 0 })
+              return
+            }
+            const avgMs = deltas.reduce((a, b) => a + b, 0) / frames
+            const sorted = [...deltas].sort((a, b) => a - b)
+            const p95Ms = sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * 0.95))]
+            const maxMs = Math.max(...deltas)
+            resolve({
+              frames,
+              avgMs,
+              avgFps: 1000 / avgMs,
+              p95Ms,
+              minFps: 1000 / maxMs,
+            })
+          }, seconds * 1000)
+        }),
     }
   }, [state])
   return null

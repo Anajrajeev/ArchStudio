@@ -222,6 +222,21 @@ export const IconPrimitive = (p: IconProps) => (
   </SvgFill>
 )
 
+/** A stair flight, drawn as three ascending steps. */
+export const IconStair = (p: IconProps) => (
+  <SvgFill {...p}>
+    <path d="M1 15v-3h4v-3h4V6h4V3h2v3h-4v3H7v3H3v3H1v-2z" />
+  </SvgFill>
+)
+
+/** A railing: top rail plus evenly spaced balusters. */
+export const IconRailing = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M1.5 5h13" />
+    <path d="M2.5 5v9M6 5v9M10 5v9M13.5 5v9" />
+  </Svg>
+)
+
 /** Boolean ops: two overlapping circles, the classic set-operation mark. */
 export const IconBoolean = (p: IconProps) => (
   <Svg {...p}>

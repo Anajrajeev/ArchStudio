@@ -66,6 +66,11 @@ export type Tool =
   // Primitive solid (B7): one click places the active primitive type. Booleans are verbs in the
   // Modify panel rather than a tool — they act on elements that already exist.
   | 'primitive'
+  // Stair (B2): a straight flight, two clicks like a beam.
+  | 'stair'
+  // Railing (B3): an OPEN polyline — collects points like slab/room but never closes on the
+  // first point, since a railing is a path, not a boundary. Finished with Enter.
+  | 'railing'
 
 /**
  * How the wall tool interprets its points. `arc` collects a third point the wall must pass
@@ -97,6 +102,8 @@ export const TOOL_POINTS: Record<Tool, number> = {
   leader: 2,
   columngrid: 1,
   primitive: 1,
+  stair: 2,
+  railing: 0, // unbounded — an open path, finished with Enter (min 2 points), not by closing
 }
 
 export type ToolPhase = 'idle' | 'collecting'
@@ -181,6 +188,8 @@ export interface EditorState {
   activeBeamTypeId: string
   activeRoofTypeId: string
   activePrimitiveTypeId: string
+  activeStairTypeId: string
+  activeRailingTypeId: string
 
   // --- pointer / snapping
   snap: SnapResult | null
@@ -330,6 +339,8 @@ export const useEditor = create<EditorState>((set, get) => ({
   activeBeamTypeId: 'bt-rect-200x400',
   activeRoofTypeId: 'rt-tile-250',
   activePrimitiveTypeId: 'pt-box',
+  activeStairTypeId: 'st-stair-280',
+  activeRailingTypeId: 'rl-standard',
 
   snap: null,
   cursorWorld: null,
@@ -414,6 +425,12 @@ export const useEditor = create<EditorState>((set, get) => ({
         break
       case 'primitive':
         set({ activePrimitiveTypeId: typeId })
+        break
+      case 'stair':
+        set({ activeStairTypeId: typeId })
+        break
+      case 'railing':
+        set({ activeRailingTypeId: typeId })
         break
     }
   },

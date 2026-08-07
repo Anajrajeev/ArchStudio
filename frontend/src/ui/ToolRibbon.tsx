@@ -33,6 +33,8 @@ import {
   IconColumnGrid,
   IconRoof,
   IconPrimitive,
+  IconStair,
+  IconRailing,
 } from './Icons'
 
 interface ToolDef {
@@ -50,6 +52,8 @@ const GROUPS: ToolDef[][] = [
     { tool: 'slab', icon: <IconSlab />, shortcut: 'F', category: 'slab' },
     { tool: 'room', icon: <IconRoom />, shortcut: 'R' },
     { tool: 'roof', icon: <IconRoof />, shortcut: 'U', category: 'roof' },
+    { tool: 'stair', icon: <IconStair />, shortcut: 'H', category: 'stair' },
+    { tool: 'railing', icon: <IconRailing />, shortcut: 'J', category: 'railing' },
   ],
   [
     { tool: 'door', icon: <IconDoor />, shortcut: 'D', category: 'door' },
@@ -259,6 +263,10 @@ function TypeSelector({ category }: { category: TypeCategory }) {
         return s.activeRoofTypeId
       case 'primitive':
         return s.activePrimitiveTypeId
+      case 'stair':
+        return s.activeStairTypeId
+      case 'railing':
+        return s.activeRailingTypeId
       default:
         return ''
     }
