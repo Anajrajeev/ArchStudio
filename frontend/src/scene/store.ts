@@ -76,6 +76,13 @@ export type Tool =
   // Spot annotation (C4): one click reads elevation, coordinate, or roof slope at the point,
   // depending on `activeSpotMode` — one tool with a ribbon mode switch, like the wall's line/arc.
   | 'spot'
+  // Curtain wall (B4): two clicks along its baseline, exactly like a straight wall. The bay grid
+  // comes from the TYPE, so there is nothing else to collect.
+  | 'curtainwall'
+  // Plan region (C7): a closed boundary loop like slab/room/ceiling, defining a sub-area of the
+  // active plan view drawn at its own cut height. Deliberately has NO single-letter shortcut —
+  // A–Z were already fully spoken for by D-025, and nothing requires a tool to have a letter.
+  | 'planregion'
 
 /**
  * How the wall tool interprets its points. `arc` collects a third point the wall must pass
@@ -122,6 +129,8 @@ export const TOOL_POINTS: Record<Tool, number> = {
   railing: 0, // unbounded — an open path, finished with Enter (min 2 points), not by closing
   ceiling: 0, // unbounded — a closed loop, exactly like slab/room
   spot: 1,
+  curtainwall: 2,
+  planregion: 0, // unbounded — a closed loop, exactly like slab/room/ceiling
 }
 
 export type ToolPhase = 'idle' | 'collecting'
@@ -221,6 +230,14 @@ export interface EditorState {
   activeStairTypeId: string
   activeRailingTypeId: string
   activeCeilingTypeId: string
+  activeCurtainWallTypeId: string
+
+  /**
+   * Which group the user has ENTERED (D5). Inside it, clicking a member selects that member
+   * rather than resolving up to the group — the isolation boundary is opened, not removed.
+   * null = not inside any group, so every pick resolves to its outermost group.
+   */
+  enteredGroupId: string | null
 
   // --- pointer / snapping
   snap: SnapResult | null
@@ -307,6 +324,8 @@ export interface EditorState {
   // selection
   select: (id: string | null, additive?: boolean) => void
   selectMany: (ids: string[], additive?: boolean) => void
+  /** Enter a group so its members become individually selectable, or null to step back out. */
+  enterGroup: (id: string | null) => void
   setHovered: (id: string | null) => void
   setMarquee: (m: EditorState['marquee']) => void
 
@@ -389,6 +408,8 @@ export const useEditor = create<EditorState>((set, get) => ({
   activeStairTypeId: 'st-stair-280',
   activeRailingTypeId: 'rl-standard',
   activeCeilingTypeId: 'clt-plaster-15',
+  activeCurtainWallTypeId: 'cwt-glazed-1500',
+  enteredGroupId: null,
 
   snap: null,
   cursorWorld: null,
@@ -506,6 +527,9 @@ export const useEditor = create<EditorState>((set, get) => ({
         break
       case 'ceiling':
         set({ activeCeilingTypeId: typeId })
+        break
+      case 'curtainWall':
+        set({ activeCurtainWallTypeId: typeId })
         break
     }
   },
@@ -752,6 +776,14 @@ export const useEditor = create<EditorState>((set, get) => ({
     ids.forEach((id) => merged.add(id))
     set({ selectedIds: [...merged] })
   },
+
+  /**
+   * D5: entering a group opens its isolation boundary. The selection is cleared on the way in and
+   * out because what a given id MEANS changes — outside the group a member click resolves to the
+   * group, inside it resolves to the member — so keeping the old selection would leave the panel
+   * showing something the next click could not reproduce.
+   */
+  enterGroup: (id) => set({ enteredGroupId: id, selectedIds: [] }),
 
   setHovered: (hoveredId) => set({ hoveredId }),
   setMarquee: (marquee) => set({ marquee }),

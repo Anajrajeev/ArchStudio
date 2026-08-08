@@ -10,6 +10,7 @@ import { describe, it, expect, beforeEach } from 'vitest'
 import * as THREE from 'three'
 import { resolvePointer, SNAP_APERTURE_PX, WALL_HIT_PX, type PointerContext } from '../editor/pointer'
 import { commitActiveTool } from '../editor/commit'
+import { joinWalls, unjoinWalls } from '../editor/joinVerbs'
 import {
   buildHostedCommit,
   buildModify,
@@ -30,6 +31,7 @@ import {
   distance,
 } from '../../../shared/geometry/index'
 import { fixture } from './helpers'
+import { findPlanView } from '../../../shared/types/scene'
 import { refFromPoint, resolveDimension } from '../../../shared/geometry/dimensions'
 import { defaultRoomTag } from '../../../shared/geometry/annotations'
 import { defaultColumnGrid } from '../../../shared/geometry/columnGrid'
@@ -1154,5 +1156,121 @@ describe('railing gesture (B3)', () => {
     expect(useEditor.getState().undoStack.length).toBe(before + 1)
     useEditor.getState().undo()
     expect(useEditor.getState().scene.railings).toHaveLength(0)
+  })
+})
+
+describe('curtain wall gesture (B4)', () => {
+  it('two clicks create one curtain wall of the expected length', () => {
+    pickTool('curtainwall')
+    click(...px(-3, 0))
+    expect(useEditor.getState().scene.curtainWalls).toHaveLength(0) // first click only arms it
+    click(...px(3, 0))
+
+    const walls = useEditor.getState().scene.curtainWalls
+    expect(walls).toHaveLength(1)
+    expect(walls[0].baseline.kind).toBe('line')
+    expect(distance(walls[0].baseline.start, walls[0].baseline.end)).toBeCloseTo(6, 1)
+  })
+
+  it('chains from the last endpoint, like the wall tool', () => {
+    pickTool('curtainwall')
+    click(...px(-3, 0))
+    click(...px(0, 0))
+    click(...px(0, 3))
+    expect(useEditor.getState().scene.curtainWalls).toHaveLength(2)
+  })
+
+  it('is a typed placement tool, so Space repeats it (D7)', () => {
+    pickTool('curtainwall')
+    click(...px(-3, 0))
+    click(...px(3, 0))
+    expect(useEditor.getState().lastPlacementTool).toBe('curtainwall')
+  })
+
+  it('refuses a zero-length run rather than creating a degenerate element', () => {
+    pickTool('curtainwall')
+    click(...px(1, 1))
+    click(...px(1, 1))
+    expect(useEditor.getState().scene.curtainWalls).toHaveLength(0)
+  })
+})
+
+describe('plan region gesture (C7)', () => {
+  it('closes a loop and seeds its range from the view it belongs to', () => {
+    pickTool('planregion')
+    click(...px(0, 0))
+    click(...px(4, 0))
+    click(...px(4, 3))
+    expect(useEditor.getState().scene.planRegions).toHaveLength(0)
+    click(...px(0, 0)) // back to the start closes it
+
+    const regions = useEditor.getState().scene.planRegions
+    expect(regions).toHaveLength(1)
+    expect(regions[0].boundary).toHaveLength(3)
+
+    const s = useEditor.getState()
+    const view = findPlanView(s.scene, s.activeLevelId)!
+    expect(regions[0].viewId).toBe(view.id)
+    expect(regions[0].viewRange).toEqual(view.viewRange)
+  })
+
+  it('needs three points, like every other loop tool', () => {
+    pickTool('planregion')
+    click(...px(0, 0))
+    click(...px(4, 0))
+    expect(commitActiveTool(useEditor.getState().points)).toBe(false)
+    expect(useEditor.getState().scene.planRegions).toHaveLength(0)
+  })
+
+  it('is NOT a typed placement tool — there is no plan-region type to repeat', () => {
+    const before = useEditor.getState().lastPlacementTool
+    pickTool('planregion')
+    click(...px(0, 0))
+    click(...px(4, 0))
+    click(...px(4, 3))
+    click(...px(0, 0))
+    expect(useEditor.getState().lastPlacementTool).toBe(before)
+  })
+})
+
+describe('wall join verb from a real selection (A9)', () => {
+  it('joins two walls drawn as a chained corner', () => {
+    pickTool('wall')
+    click(...px(-3, 0))
+    click(...px(3, 0))
+    click(...px(3, 4))
+    const walls = useEditor.getState().scene.walls
+    expect(walls).toHaveLength(2)
+
+    const s = useEditor.getState()
+    const result = joinWalls(s.scene, walls.map((w) => w.id))
+    if ('error' in result) throw new Error(result.error)
+    expect(result.scene.wallJoins).toHaveLength(1)
+    // The join point is the endpoint they already share — the user never picks it.
+    expect(result.scene.wallJoins[0].point[0]).toBeCloseTo(3, 1)
+    expect(result.scene.wallJoins[0].point[1]).toBeCloseTo(0, 1)
+  })
+
+  it('unjoin removes the relationship and leaves both walls standing', () => {
+    pickTool('wall')
+    click(...px(-3, 0))
+    click(...px(3, 0))
+    click(...px(3, 4))
+    const ids = useEditor.getState().scene.walls.map((w) => w.id)
+    const joined = joinWalls(useEditor.getState().scene, ids)
+    if ('error' in joined) throw new Error(joined.error)
+
+    const undone = unjoinWalls(joined.scene, ids)
+    if ('error' in undone) throw new Error(undone.error)
+    expect(undone.scene.wallJoins).toHaveLength(0)
+    expect(undone.scene.walls).toHaveLength(2)
+  })
+
+  it('refuses a selection that is not two or more walls', () => {
+    pickTool('wall')
+    click(...px(-3, 0))
+    click(...px(3, 0))
+    const one = useEditor.getState().scene.walls[0].id
+    expect('error' in joinWalls(useEditor.getState().scene, [one])).toBe(true)
   })
 })

@@ -6,9 +6,22 @@
  */
 import { useEffect, useMemo, useRef } from 'react'
 import { Canvas, useThree, useFrame, type ThreeEvent } from '@react-three/fiber'
-import { OrbitControls, GizmoHelper, GizmoViewcube } from '@react-three/drei'
+import { OrbitControls, GizmoHelper, GizmoViewcube, Line } from '@react-three/drei'
 import * as THREE from 'three'
-import { findLevel } from '../../../shared/types/scene'
+import {
+  ELEMENT_COLLECTIONS,
+  defaultViewRange,
+  findLevel,
+  findPlanView,
+  type Level,
+  type PlanRegion,
+} from '../../../shared/types/scene'
+import {
+  clipBandFor,
+  partitionByRegion,
+  type ClipBand,
+} from '../../../shared/geometry/viewRange'
+import { expandSelection, resolveSelection } from '../editor/groups'
 import { useEditor } from '../scene/store'
 import { useCanvasTheme, type CanvasTheme } from './theme'
 import { probeWebGL, type Capability } from './capability'
@@ -25,6 +38,7 @@ import {
   Columns,
   Beams,
   Furniture,
+  CurtainWalls,
   type RenderOpts,
 } from './Elements'
 import { Roofs } from './Roofs'
@@ -270,24 +284,45 @@ function SceneContent({ theme }: { theme: CanvasTheme }) {
   const select = useEditor((s) => s.select)
   const setHovered = useEditor((s) => s.setHovered)
   const tool = useEditor((s) => s.tool)
+  const enteredGroupId = useEditor((s) => s.enteredGroupId)
 
   const active = findLevel(scene, activeLevelId)
+  // C7: the active plan view. Created with the level, so this is a lookup rather than a mutation.
+  const activeView = useMemo(() => findPlanView(scene, activeLevelId), [scene, activeLevelId])
+  const regions = useMemo(
+    () => (activeView ? scene.planRegions.filter((r) => r.viewId === activeView.id) : []),
+    [scene.planRegions, activeView],
+  )
 
   /**
-   * Cut plane: hide everything above the cut height. In plan mode the cut sits at the
-   * conventional ~1.2 m so doors and windows read as openings in the walls.
+   * The clip band for the active level, from the view's own range (C7) rather than a constant.
+   * In 3D the cut is still just "everything above this storey", which is what the cut-view toggle
+   * has always meant there; only PLAN reads the range, because a range is a drawing concept.
    */
-  const clippingPlanes = useMemo(() => {
-    if (!cutViewEnabled || !active) return undefined
-    const cutHeight = viewMode === 'plan' ? active.elevation + 1.2 : active.elevation + active.height
-    return [new THREE.Plane(new THREE.Vector3(0, -1, 0), cutHeight)]
-  }, [cutViewEnabled, active, viewMode])
+  const activeBand = useMemo(() => {
+    if (!cutViewEnabled || !active) return null
+    if (viewMode !== 'plan') {
+      return { top: active.elevation + active.height, bottom: -Infinity, beyond: -Infinity }
+    }
+    const range = activeView?.viewRange ?? defaultViewRange(active.height)
+    return clipBandFor(active.elevation, range)
+  }, [cutViewEnabled, active, viewMode, activeView])
+
+  /**
+   * D5: selecting a group must light up every member, so the renderers — which know nothing about
+   * groups — are handed the expanded leaf set.
+   */
+  const highlightIds = useMemo(
+    () => expandSelection(scene, selectedIds),
+    [scene, selectedIds],
+  )
 
   const onPick = (id: string, e: ThreeEvent<MouseEvent>) => {
     // Only the select tool consumes picks; drawing tools must let the click through to the plane.
     if (tool !== 'select') return
     e.stopPropagation()
-    select(id, e.nativeEvent.shiftKey)
+    // D5: a click on a member selects the group it belongs to, unless the user has entered it.
+    select(resolveSelection(scene, id, enteredGroupId), e.nativeEvent.shiftKey)
   }
 
   const levels = useMemo(
@@ -295,30 +330,47 @@ function SceneContent({ theme }: { theme: CanvasTheme }) {
     [scene.levels],
   )
 
+  // C8: the one other level drawn halftone under this plan, clipped by ITS OWN range.
+  const underlayLevelId = viewMode === 'plan' ? (activeView?.underlayLevelId ?? null) : null
+
   return (
     <group>
       {levels.map((level) => {
         const isActive = level.id === activeLevelId
         const isBelow = active ? level.elevation < active.elevation : false
         const isAbove = active ? level.elevation > active.elevation : false
+        const isUnderlay = !isActive && level.id === underlayLevelId
 
-        if (isolateLevel && !isActive) return null
-        if (cutViewEnabled && isAbove) return null
-        if (isBelow && !ghostBelowEnabled) return null
+        // The underlay is shown on purpose, so it overrides every visibility rule that would
+        // otherwise hide it — including "isolate level" and "hide everything above the cut".
+        if (!isUnderlay) {
+          if (isolateLevel && !isActive) return null
+          if (cutViewEnabled && isAbove) return null
+          if (isBelow && !ghostBelowEnabled) return null
+        }
 
-        const ghost = !isActive
         const opts: RenderOpts = {
           scene,
           theme,
-          selectedIds,
+          selectedIds: highlightIds,
           hoveredId,
-          ghost,
+          ghost: !isActive,
+          underlay: isUnderlay,
           onPick,
           onHover: setHovered,
         }
 
-        return (
-          <ClippedGroup key={level.id} planes={isActive ? clippingPlanes : undefined}>
+        // An underlay is cut at the height ITS own plan view says, not the active one's — seeing
+        // the floor below at its own door height is the entire point of the feature (C8).
+        const underlayBand = isUnderlay
+          ? clipBandFor(
+              level.elevation,
+              findPlanView(scene, level.id)?.viewRange ?? defaultViewRange(level.height),
+            )
+          : null
+
+        const content = (
+          <>
             <Slabs opts={opts} levelId={level.id} />
             <Ceilings opts={opts} levelId={level.id} />
             <Rooms opts={opts} levelId={level.id} />
@@ -331,10 +383,162 @@ function SceneContent({ theme }: { theme: CanvasTheme }) {
             <Primitives opts={opts} levelId={level.id} />
             <Stairs opts={opts} levelId={level.id} />
             <Railings opts={opts} levelId={level.id} />
-          </ClippedGroup>
+            <CurtainWalls opts={opts} levelId={level.id} />
+          </>
+        )
+
+        if (isUnderlay) {
+          return (
+            <ClippedGroup key={level.id} planes={bandToPlanes(underlayBand)}>
+              {content}
+            </ClippedGroup>
+          )
+        }
+
+        // `!activeBand` means the cut is switched off entirely. A region redefines the cut for
+        // its area, so with no cut there is nothing for it to redefine — partitioning here would
+        // leave region contents clipped while everything around them was not, which is exactly
+        // what the cut toggle is supposed to prevent.
+        if (!isActive || regions.length === 0 || !activeBand) {
+          return (
+            <ClippedGroup key={level.id} planes={isActive ? bandToPlanes(activeBand) : undefined}>
+              {content}
+            </ClippedGroup>
+          )
+        }
+
+        // C7 plan regions: the active level's elements are PARTITIONED by which region governs
+        // them and each partition is clipped separately. No geometry is duplicated, and an
+        // arbitrary polygon works — unlike clipping the base render to a region's complement,
+        // which three.js's half-space planes cannot express.
+        return (
+          <RegionedLevel
+            key={level.id}
+            level={level}
+            opts={opts}
+            regions={regions}
+            fallback={activeBand}
+          />
         )
       })}
+      {regions.length > 0 && viewMode === 'plan' && <PlanRegionOutlines regions={regions} />}
     </group>
+  )
+}
+
+/** Turn a resolved band into the clip planes three.js wants, or undefined for "no clipping". */
+function bandToPlanes(band: ClipBand | null): THREE.Plane[] | undefined {
+  if (!band) return undefined
+  const planes = [new THREE.Plane(new THREE.Vector3(0, -1, 0), band.top)]
+  // A finite bottom adds an upward-facing plane. `beyond` extends how far down is still drawn.
+  if (Number.isFinite(band.beyond)) {
+    planes.push(new THREE.Plane(new THREE.Vector3(0, 1, 0), -band.beyond))
+  }
+  return planes
+}
+
+/**
+ * The active level rendered once per plan region plus once for everything outside them (C7).
+ *
+ * Each partition gets its own `ClippedGroup`, so an element is drawn exactly once, at exactly one
+ * cut height — the height of whichever region contains its plan anchor. See D-029 for why an
+ * element is never split at a region boundary.
+ */
+function RegionedLevel({
+  level,
+  opts,
+  regions,
+  fallback,
+}: {
+  level: Level
+  opts: RenderOpts
+  regions: PlanRegion[]
+  fallback: ClipBand | null
+}) {
+  const { scene } = opts
+  const partitions = useMemo(() => {
+    const ids = ELEMENT_COLLECTIONS.flatMap((key) => {
+      const items = scene[key] as ReadonlyArray<{ id: string; levelId?: string }>
+      return items.filter((i) => i.levelId === level.id).map((i) => i.id)
+    })
+    return [...partitionByRegion(scene, ids, regions).entries()]
+  }, [scene, level.id, regions])
+
+  return (
+    <>
+      {partitions.map(([region, ids]) => (
+        <ClippedGroup
+          key={region?.id ?? 'default'}
+          planes={bandToPlanes(region ? clipBandFor(level.elevation, region.viewRange) : fallback)}
+        >
+          <PartitionContent opts={opts} levelId={level.id} ids={new Set(ids)} />
+        </ClippedGroup>
+      ))}
+    </>
+  )
+}
+
+/** The element renderers, restricted to one partition's ids. */
+function PartitionContent({
+  opts,
+  levelId,
+  ids,
+}: {
+  opts: RenderOpts
+  levelId: string
+  ids: Set<string>
+}) {
+  const scoped = useMemo<RenderOpts>(() => ({ ...opts, only: ids }), [opts, ids])
+  return (
+    <>
+      <Slabs opts={scoped} levelId={levelId} />
+      <Ceilings opts={scoped} levelId={levelId} />
+      <Rooms opts={scoped} levelId={levelId} />
+      <Walls opts={scoped} levelId={levelId} />
+      <Fillings opts={scoped} levelId={levelId} />
+      <Columns opts={scoped} levelId={levelId} />
+      <Beams opts={scoped} levelId={levelId} />
+      <Furniture opts={scoped} levelId={levelId} />
+      <Roofs opts={scoped} levelId={levelId} />
+      <Primitives opts={scoped} levelId={levelId} />
+      <Stairs opts={scoped} levelId={levelId} />
+      <Railings opts={scoped} levelId={levelId} />
+      <CurtainWalls opts={scoped} levelId={levelId} />
+    </>
+  )
+}
+
+/**
+ * A dashed outline around each plan region, drawn at the region's own cut height.
+ *
+ * Not decoration: D-029's rule is that an element belongs wholly to one region by its anchor
+ * point, and that rule is only defensible if the user can SEE where the boundary runs.
+ */
+function PlanRegionOutlines({ regions }: { regions: PlanRegion[] }) {
+  const scene = useEditor((s) => s.scene)
+  const theme = useCanvasTheme()
+  return (
+    <>
+      {regions.map((region) => {
+        const view = scene.views.find((v) => v.id === region.viewId)
+        const level = view?.levelId ? findLevel(scene, view.levelId) : undefined
+        const y = (level?.elevation ?? 0) + region.viewRange.cutHeight
+        const points = [...region.boundary, region.boundary[0]].map(
+          ([x, z]) => new THREE.Vector3(x, y, z),
+        )
+        return (
+          <Line
+            key={region.id}
+            points={points}
+            color={theme.gridMajor}
+            lineWidth={1}
+            dashed
+            dashSize={0.25}
+            gapSize={0.15}
+          />
+        )
+      })}
+    </>
   )
 }
 

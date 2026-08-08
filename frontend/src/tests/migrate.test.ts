@@ -264,7 +264,9 @@ describe('migrateScene v2 → v6 (chained)', () => {
   })
 
   it('adds every collection introduced after v2', () => {
-    expect(migrated.views).toEqual([])
+    // `views` is NOT empty: v9 gives every level a plan view (C7), so a v2 document with one
+    // level arrives with one view. See the v8 → v9 block below.
+    expect(migrated.views).toHaveLength(migrated.levels.length)
     expect(migrated.dimensions).toEqual([])
     expect(migrated.annotations).toEqual([])
     expect(migrated.roomTags).toEqual([])
@@ -282,7 +284,8 @@ describe('migrateScene v1 → v6 (chained)', () => {
 
   it('arrives at the current version with all new collections', () => {
     expect(migrated.schemaVersion).toBe(SCHEMA_VERSION)
-    expect(migrated.views).toEqual([])
+    // One plan view per level, added by v8 → v9 (C7) — not empty.
+    expect(migrated.views).toHaveLength(migrated.levels.length)
     expect(migrated.dimensions).toEqual([])
     expect(migrated.annotations).toEqual([])
     expect(migrated.roomTags).toEqual([])
@@ -711,5 +714,160 @@ describe('the full v1 → v8 chain reaches ceilings', () => {
     expect(migrated.walls).toHaveLength(3)
     expect(migrated.openings).toHaveLength(2)
     expect(migrated.fillings).toHaveLength(2)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// v8 → v9
+// ---------------------------------------------------------------------------
+
+/**
+ * A representative v8 document: two levels, a plan view carrying the OLD absolute
+ * `cutPlaneHeight`, and a 3D view with no cut at all — the two states the rewrite has to handle.
+ */
+const V8 = {
+  ...V7,
+  schemaVersion: 8,
+  projectId: 'proj-v8',
+  levels: [
+    { id: 'lv1', name: 'Ground', elevation: 0, height: 3, isBuildingStory: true, computationHeight: 0 },
+    { id: 'lv2', name: 'First', elevation: 3, height: 3, isBuildingStory: true, computationHeight: 0 },
+  ],
+  slabs: V7.slabs.map((s) => ({ ...s, openings: [] })),
+  annotations: V7.annotations.map((a) => ({ ...a, elevation: null, slope: null })),
+  ceilings: [],
+  views: [
+    {
+      id: 'v-old',
+      name: 'First floor plan',
+      cameraPosition: [0, 40, 0],
+      cameraTarget: [0, 0, 0],
+      projection: 'orthographic' as const,
+      levelId: 'lv2',
+      // ABSOLUTE world Y: the level sits at 3 m, so this is a 1.2 m cut above its own floor.
+      cutPlaneHeight: 4.2,
+      visibleLevelIds: null,
+      cropRegion: null,
+      workPlaneElevation: 3,
+    },
+    {
+      id: 'v-3d',
+      name: 'Free 3D',
+      cameraPosition: [10, 10, 10],
+      cameraTarget: [0, 0, 0],
+      projection: 'perspective' as const,
+      levelId: null,
+      cutPlaneHeight: null,
+      visibleLevelIds: null,
+      cropRegion: null,
+      workPlaneElevation: 0,
+    },
+  ],
+}
+
+describe('migrateScene v8 → v9', () => {
+  const migrated = migrateScene(V8)
+
+  it('bumps the schema version', () => {
+    expect(migrated.schemaVersion).toBe(SCHEMA_VERSION)
+  })
+
+  it('adds the four new collections empty', () => {
+    expect(migrated.curtainWalls).toEqual([])
+    expect(migrated.wallJoins).toEqual([])
+    expect(migrated.groups).toEqual([])
+    expect(migrated.planRegions).toEqual([])
+  })
+
+  it('back-fills the default curtain-wall type so the tool is usable on an old project', () => {
+    expect(migrated.types.map((t) => t.category)).toContain('curtainWall')
+  })
+
+  it('does not duplicate a curtain-wall type the document already had', () => {
+    const withOwn = {
+      ...V8,
+      types: [
+        ...V8.types,
+        {
+          id: 'cwt-glazed-1500',
+          category: 'curtainWall' as const,
+          name: 'My own curtain wall',
+          gridU: { kind: 'fixedNumber' as const, count: 2 },
+          gridV: { kind: 'fixedNumber' as const, count: 2 },
+          mullionWidth: 0.06,
+          mullionDepth: 0.2,
+          panelThickness: 0.03,
+          panelMaterial: 'mat-glass',
+          mullionMaterial: 'mat-steel',
+        },
+      ],
+    }
+    const matches = migrateScene(withOwn).types.filter((t) => t.id === 'cwt-glazed-1500')
+    expect(matches).toHaveLength(1)
+    expect(matches[0].name).toBe('My own curtain wall')
+  })
+
+  it('converts an absolute cutPlaneHeight into a level-RELATIVE viewRange', () => {
+    // The whole point of the rewrite: 4.2 m absolute on a level at 3 m is a 1.2 m cut height,
+    // describing the identical plane. Getting this wrong would silently move every stored cut.
+    const view = migrated.views.find((v) => v.id === 'v-old')!
+    // `toBeCloseTo`, not `toEqual`: 4.2 - 3 is 1.2000000000000002 in IEEE 754. The migration
+    // deliberately does NOT round — rounding a stored value to make a test pretty would move
+    // the plane by a hair on every document that migrates.
+    expect(view.viewRange!.cutHeight).toBeCloseTo(1.2)
+    expect(view.viewRange!.topOffset).toBe(3)
+    expect(view.viewRange!.bottomOffset).toBe(0)
+    expect(view.viewRange!.viewDepth).toBe(0)
+    expect((view as unknown as { cutPlaneHeight?: unknown }).cutPlaneHeight).toBeUndefined()
+  })
+
+  it('leaves a 3D view (no cut) with a null viewRange', () => {
+    const view = migrated.views.find((v) => v.id === 'v-3d')!
+    expect(view.viewRange).toBeNull()
+    expect(view.underlayLevelId).toBeNull()
+  })
+
+  it('creates a plan view for every level that did not already have one', () => {
+    // lv2 already had `v-old`; only lv1 needs one, so there are three views, not four.
+    expect(migrated.views).toHaveLength(3)
+    const lv1View = migrated.views.find((v) => v.levelId === 'lv1')!
+    expect(lv1View.viewRange).toEqual({
+      cutHeight: 1.2,
+      topOffset: 3,
+      bottomOffset: 0,
+      viewDepth: 0,
+    })
+    expect(lv1View.name).toBe('Ground — Plan')
+    // And it did NOT add a second view for lv2.
+    expect(migrated.views.filter((v) => v.levelId === 'lv2')).toHaveLength(1)
+  })
+
+  it('preserves the rest of the v8 document', () => {
+    expect(migrated.projectId).toBe('proj-v8')
+    expect(migrated.slabs).toHaveLength(1)
+    expect(migrated.annotations[0].text).toBe('Existing note')
+  })
+})
+
+describe('the full v1 → v9 chain reaches curtain walls, joins and groups', () => {
+  const migrated = migrateScene(V1)
+
+  it('arrives at the current version with every v9 collection present', () => {
+    expect(migrated.schemaVersion).toBe(SCHEMA_VERSION)
+    expect(migrated.curtainWalls).toEqual([])
+    expect(migrated.wallJoins).toEqual([])
+    expect(migrated.groups).toEqual([])
+    expect(migrated.planRegions).toEqual([])
+  })
+
+  it('still preserves the original v1 geometry after eight migrations', () => {
+    expect(migrated.walls).toHaveLength(3)
+    expect(migrated.openings).toHaveLength(2)
+    expect(migrated.fillings).toHaveLength(2)
+  })
+
+  it('gives every v1 storey a plan view', () => {
+    expect(migrated.views).toHaveLength(migrated.levels.length)
+    expect(migrated.views.every((v) => v.viewRange !== null)).toBe(true)
   })
 })

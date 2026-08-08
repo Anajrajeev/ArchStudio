@@ -29,7 +29,7 @@ exporters must use the same code.
 authoritative** — an inline copy here went stale and the Python models silently drifted five
 versions behind before E5 caught it.
 
-Current version: **v6**. Shape, in brief (read `scene.ts` for the real field lists):
+Current version: **v9**. Shape, in brief (read `scene.ts` for the real field lists):
 
 - **Category → Type → Instance** (D-009). Shape and composition live on a shared `ElementTypeDef`
   (9 categories); placement and extent live on the instance. Edit the type, every instance updates.
@@ -37,8 +37,11 @@ Current version: **v6**. Shape, in brief (read `scene.ts` for the real field lis
   height.
 - Elements: `walls` (line or arc baselines), `openings` → `fillings` (the IFC host → opening →
   filling chain), `slabs`, `columns`, `beams`, `roofs`, `rooms`, `furniture`, `columnGrids`,
-  `primitives`, `booleans` (a parametric CSG tree — D-019).
-- View-scoped annotation: `views`, `dimensions`, `annotations`, `roomTags`.
+  `primitives`, `booleans` (a parametric CSG tree — D-019), `stairs`, `railings`, `ceilings`,
+  `curtainWalls`, plus two relationship collections that reference element ids rather than carrying
+  geometry: `wallJoins` (corner cleanup — D-026) and `groups` (isolation boundaries — D-028).
+- View-scoped: `views` (LIVE since D-029 — every level has a plan view carrying a `ViewRange` and an
+  optional underlay), `planRegions`, `dimensions`, `annotations`, `roomTags`.
 
 `schemaVersion` is bumped with migrations; **old projects must always load.**
 

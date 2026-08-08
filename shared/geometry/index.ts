@@ -483,6 +483,16 @@ export interface Box3D {
    * 0) for every ordinary flat-topped box — columns, beams, and most walls never set this.
    */
   topRamp?: number
+  /**
+   * Wall joins (A9, D-026): the box's END faces are cut on a slant instead of square. A corner
+   * at local-Z `lz` is displaced along local X by `lz · tan(angle)`, so the face stays a PLANE
+   * (rotated about local Y) — which is exactly what a mitre is, and what lets one number per end
+   * describe it.
+   *
+   * `start` applies to the local -X face, `end` to the local +X face. Undefined for every
+   * square-ended box, which is every box in the app until two walls are explicitly joined.
+   */
+  endSkew?: { start: number; end: number }
 }
 
 /** Rotation about world Y so a box's local +X follows a 2D direction (scene y → world z). */
@@ -503,6 +513,8 @@ export function boxCorners(box: Box3D): Vec3[] {
   const sin = Math.sin(box.rotationY)
   const out: Vec3[] = []
   const rampHalf = (box.topRamp ?? 0) / 2
+  const tanStart = box.endSkew ? Math.tan(box.endSkew.start) : 0
+  const tanEnd = box.endSkew ? Math.tan(box.endSkew.end) : 0
   // Rotation about Y: [x,z] → [x·cos + z·sin, −x·sin + z·cos].
   for (const sy of [-1, 1]) {
     for (const [sx, sz] of [
@@ -511,8 +523,10 @@ export function boxCorners(box: Box3D): Vec3[] {
       [1, 1],
       [-1, 1],
     ]) {
-      const x = sx * hx
       const z = sz * hz
+      // A9: each END face may be slanted. The displacement is proportional to the corner's own
+      // local-Z, which is what keeps the face planar — see `Box3D.endSkew`.
+      const x = sx * hx + z * (sx < 0 ? tanStart : tanEnd)
       // Only the TOP corners (sy === 1) ramp — sz === -1 ("front") drops, sz === 1 ("back")
       // rises, by half the ramp each, so the box's nominal centre height is still the average.
       const rampY = sy === 1 ? sz * rampHalf : 0
@@ -610,16 +624,60 @@ function mergeSpans(spans: Array<[number, number]>): Array<[number, number]> {
 }
 
 /**
+ * How a wall join (A9) adjusts one wall's run. Produced by `shared/geometry/wallJoin.ts`; passed
+ * straight through to `wallSolidBoxes`, which is the only consumer.
+ *
+ * Extensions are SIGNED distances along the wall's own direction — positive lengthens, negative
+ * trims — and are applied at render time only. The wall's stored `baseline` never changes, which
+ * is what keeps openings (whose `offset` is measured from that baseline's start) exactly where the
+ * user put them, and what makes unjoining a pure delete.
+ */
+export interface WallEndAdjust {
+  startExtend: number
+  endExtend: number
+  /** Mitre angles for the two end faces; 0 = a square end. See `Box3D.endSkew`. */
+  startSkew: number
+  endSkew: number
+}
+
+/**
  * Decompose a resolved wall + its openings into the solid boxes that remain: full-height runs
  * between openings, the lintel above each opening, and the section below a window sill.
  *
  * Curved walls are tessellated into straight chunks first, so an arc wall with a window works
  * through exactly the same code path.
+ *
+ * `adjust` (A9) extends or trims the run at either end and slants the end faces. It is only ever
+ * non-zero for a STRAIGHT wall, because `wallJoin.ts` refuses to join a curved one — which is why
+ * the extended run below can extrapolate the baseline linearly without an arc case.
  */
-export function wallSolidBoxes(wall: ResolvedWall, openings: Opening[]): Box3D[] {
+export function wallSolidBoxes(
+  wall: ResolvedWall,
+  openings: Opening[],
+  adjust?: WallEndAdjust,
+): Box3D[] {
   const { thickness, height, baseElevation } = wall
   const length = wall.length
   if (length < 1e-9 || height < 1e-9 || thickness < 1e-9) return []
+
+  const runStart = -(adjust?.startExtend ?? 0)
+  const runEnd = length + (adjust?.endExtend ?? 0)
+  if (runEnd - runStart < 1e-9) return []
+  const skew = adjust && (adjust.startSkew !== 0 || adjust.endSkew !== 0) ? adjust : null
+
+  /**
+   * The centerline point at `s`, extrapolating past either end for a line. `baselinePointAt`
+   * deliberately CLAMPS (snapping and dimensions rely on that), so an extended join run needs its
+   * own linear continuation rather than a change to shared behaviour.
+   */
+  const pointAt = (s: number): Vec2 => {
+    const c = wall.centerline
+    if (c.kind === 'line' && (s < 0 || s > length)) {
+      const d = direction(c.start, c.end)
+      return [c.start[0] + d[0] * s, c.start[1] + d[1] * s]
+    }
+    return baselinePointAt(c, s).point
+  }
 
   // Clamp openings to the wall and drop degenerate ones.
   const spans = openings
@@ -648,32 +706,41 @@ export function wallSolidBoxes(wall: ResolvedWall, openings: Opening[]): Box3D[]
   }
 
   const pushChunk = (s0: number, s1: number, y0: number, y1: number): void => {
-    const a = baselinePointAt(wall.centerline, s0)
-    const b = baselinePointAt(wall.centerline, s1)
-    const mid: Vec2 = lerp2(a.point, b.point, 0.5)
-    const chord = distance(a.point, b.point)
+    const pa = pointAt(s0)
+    const pb = pointAt(s1)
+    const mid: Vec2 = lerp2(pa, pb, 0.5)
+    const chord = distance(pa, pb)
     if (chord < 1e-9) return
-    const dir = direction(a.point, b.point)
+    const dir = direction(pa, pb)
     // Only a chunk that reaches the wall's own top ramps — a below-sill or under-lintel section
     // stops well short of the roof and must stay flat. `wall.roofRamp` is only ever set for a
     // straight wall (wallRoofRamp refuses a curved one), so every chunk here shares one direction.
     const reachesTop = wall.roofRamp !== undefined && y1 >= height - 1e-6
+    // A mitre belongs to whichever chunk actually reaches the run's own end — including a lintel
+    // over a door sitting right at the corner, which is why this is not restricted to full-height
+    // chunks the way the roof ramp is.
+    const atStart = skew !== null && s0 <= runStart + 1e-9
+    const atEnd = skew !== null && s1 >= runEnd - 1e-9
     boxes.push({
       center: [mid[0], baseElevation + (y0 + y1) / 2, mid[1]],
       size: [chord, y1 - y0, thickness],
       rotationY: rotationYFor(dir),
       topRamp: reachesTop ? wall.roofRamp!.backDelta - wall.roofRamp!.frontDelta : undefined,
+      endSkew:
+        atStart || atEnd
+          ? { start: atStart ? skew!.startSkew : 0, end: atEnd ? skew!.endSkew : 0 }
+          : undefined,
     })
   }
 
-  // Full-height runs = the parts of [0,length] no opening covers.
+  // Full-height runs = the parts of the run no opening covers.
   const covered = mergeSpans(spans.map((s) => [s.x0, s.x1] as [number, number]))
-  let cursor = 0
+  let cursor = runStart
   for (const [cs, ce] of covered) {
     emit(cursor, cs, 0, height)
     cursor = ce
   }
-  emit(cursor, length, 0, height)
+  emit(cursor, runEnd, 0, height)
 
   // Under-sill and lintel for each opening.
   for (const s of spans) {

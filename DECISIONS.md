@@ -669,3 +669,257 @@ while the camera is actively orbiting/panning, and behind a plan-view orthograph
 follow-up before any Phase 7 optimization work, since draw-call patterns can differ.
 
 ---
+
+## D-026 — Wall joins: a stored `WallJoin` object, mitres via a new `Box3D.endSkew`, assembly-level only (Phase 1B-iv, A9)
+
+**Decision:** A wall join is an explicit, stored `WallJoin` (`{levelId, memberIds, point, style,
+throughId}`) created by a "Join walls" verb over an existing selection, and deleted to unjoin. It
+carries no geometry: `shared/geometry/wallJoin.ts` derives every trim distance and mitre angle from
+the members' current baselines on each resolve, so moving a joined wall keeps the corner clean.
+`Box3D` gains `endSkew` — a per-end slant angle, applied in `boxCorners` by displacing each corner
+along local X by `lz · tan(angle)` — and `wallSolidBoxes` gains an optional `WallEndAdjust`.
+
+**Why an object rather than a field on `Wall`:** at a T- or X-junction a stem meets another wall's
+MIDDLE, not its end, so `Wall.joinStart`/`joinEnd` could not express it. A referencing node created
+by a verb over a selection is exactly the shape `BooleanNode` (D-019) already proved out — it is
+selectable, has Properties, appears in the model tree, and "unjoin" is just deleting it. There is no
+separate "disallow join" state to store, because the absence of a `WallJoin` already means that.
+
+**Why explicit rather than automatic:** the alternative — deriving joins from the wall graph on every
+resolve — was considered and rejected. A corner's correct treatment is not always inferable (an
+equal-thickness corner can legitimately be mitred *or* butted; a T can run either wall through), and
+silently rearranging geometry the user did not ask for is the wrong default in a tool where the
+model is the deliverable. The verb keeps the choice where the ambiguity is.
+
+**Why `endSkew` mirrors `topRamp`:** D-020 had already established the precedent that a "box" in this
+codebase may have one non-rectangular face, resolved in `boxCorners` and routed through
+`boxToTriMesh` for both the viewport and the exporter. A mitre is the same shape of change on a
+different face, so it reuses that path exactly — one renderer branch (`ShapedBoxMesh`, generalised
+from `RampedBoxMesh`), one exporter branch, and box-select picks up the mitred silhouette for free
+because it reads the same `boxCorners`.
+
+**What is solved:**
+
+- **L-corner, two straight walls of equal thickness (±1 mm): a true mitre.** Both walls keep their
+  nominal end at the join point and both end faces are cut along the same line — the bisector of the
+  two directions pointing away from the point. The skew angle is closed form: `Box3D.endSkew` defines
+  the face as the locus `n + tan(σ)·dir`, so requiring that parallel to the mitre line `m` gives
+  `tan(σ) = (m·dir) / (m·n)` directly — one formula covering every turn angle and both ends with no
+  case analysis. Verified live: the two walls' end faces resolve to the *same two points*.
+- **L-corner, unequal thickness: butt.** The thicker wall (or `throughId`) runs to the other's FAR
+  face so the corner is filled; the other trims back to its NEAR face. Both are the same line-plane
+  crossing with the target offset's sign flipped, so there is one implementation.
+- **T-junction: butt**, in both its real-world flavours — one wall passing through the point, and two
+  collinear walls terminating at it (the same run after a Split). A stem that stops short of the
+  wall is EXTENDED to meet it, which is why members are classified against the wall's infinite line
+  rather than only its endpoints.
+- **X-junction (two walls crossing): a no-op.** The overlap is interior and invisible. Recorded as
+  handled rather than silently unhandled.
+
+**What is refused, and why** — every case surfaces through `validateWallJoin` as a message, never a
+guess:
+
+- **Per-layer cleanup is out of scope, and this is the D-018-shaped scoped answer for this item.**
+  Revit's real join wraps individual layers of a compound wall around the corner. D-009 already
+  declined to model a wall "core" — `locationLine` has 3 values rather than Revit's 6 precisely
+  because "the core-face variants need a core concept the layer model doesn't yet express" — and
+  per-layer wrapping needs exactly that missing concept. **We join at the assembly level.** Adding
+  the core concept first is the prerequisite, not a detail of this item.
+- **A curved wall at a join.** The extension runs along an arc and the end face is not a plane, so
+  a single skew angle cannot describe it. Refused rather than approximated (D-018's rule again).
+- **Members with no vertical overlap** — nothing to clean up.
+- **More than four members**, or three-plus members with no straight run among them — no unambiguous
+  wall to run through.
+- **Too shallow a crossing angle** (< 10°) for a butt, where the crossing distance runs away.
+- **A join point more than one wall-length beyond either end**, so two walls whose lines happen to
+  cross somewhere in the distance do not "meet" with a metres-long trim.
+
+**Consequence — the join never touches stored geometry.** Extensions and mitres are applied at
+decomposition time only; `Wall.baseline` is unchanged. That is what keeps openings (whose `offset` is
+measured from that baseline's start) exactly where the user put them when an end is trimmed, and it
+makes unjoining a pure delete with nothing to undo.
+
+**Alternative considered:** storing the resolved trim on each wall at join time. Rejected — it would
+go stale the moment either wall moved, which is the failure mode "the tree is the source of truth,
+never the evaluated result" (D-019) exists to rule out.
+
+---
+
+## D-027 — Curtain wall is a new element kind, not a `Wall` type (Phase 1B-iv, B4)
+
+**Decision:** A new category `curtainWall` with `CurtainWallTypeDef` (two `GridRule`s, mullion
+width/depth, panel thickness, two materials) and a `CurtainWall` instance that reuses `Baseline` and
+the `TopConstraint` union. `shared/geometry/curtainWall.ts` decomposes it into the same axis-aligned
+`Box3D`s walls, stairs and railings already use, returned as `{frame, panels}` so framing and glazing
+are separated once rather than re-derived by the renderer and the exporter independently.
+
+**Why not a `WallTypeDef` variant:** a `Wall` is an assembly of full-length layers whose thickness is
+`assemblyThickness(layers)` and whose holes are `Opening`s cut by box decomposition. A curtain wall
+has no layers (so `assemblyThickness` is meaningless for it) and takes no openings. Every field it
+needs would be dead on 100% of ordinary walls, and every field a wall needs would be dead on it. The
+category split is what the data actually looks like.
+
+**Panels are sized BY the grid, never directly** — the defining property of a glazing system, and the
+one the backlog item names explicitly. There is no panel width or height field anywhere in the
+schema; a panel is simply whatever falls between two adjacent grid lines. The grid lives on the
+TYPE, so editing it re-grids every instance (D-009) — confirmed live by changing the bay spacing and
+watching a placed curtain wall re-divide.
+
+**`GridRule` has three variants, and `gridPositions` always returns both ends as lines.** Returning
+the ends rather than special-casing them is what makes the rest of the decomposition trivial: a
+mullion sits on every line and a panel fills every gap, with no separate "border mullion" concept to
+keep in step. `maximumSpacing` (the fewest EQUAL bays with none exceeding the maximum) is the
+default, because that is what a real glazing system does — an even rhythm with no stray narrow panel
+at one end; `fixedDistance` keeps exact bays and accepts a shorter final one.
+
+**Out of scope, stated rather than discovered later:**
+
+- **A curved (arc) baseline.** A curved curtain wall is a *faceted* one, and the facets have to
+  coincide with the U grid — a second geometry case with its own mullion-rotation problem. Refused
+  with a message by `validateCurtainWall`, not approximated. The additive path is clear: facet at the
+  U lines and give each bay its own rotation.
+- **Door/panel-type overrides.** A door in a curtain wall is a panel *type* substitution, which needs
+  a per-cell override table. A real feature, materially bigger than this item.
+- **Border mullions differing from interior mullions**, and split/joined mullion profiles.
+
+---
+
+## D-028 — Groups are a top-level collection referencing ids, entered explicitly (Phase 1B-iv, D5)
+
+**Decision:** `groups: ElementGroup[]`, where an `ElementGroup` is `{id, name, memberIds}` and a
+member id may be another group's id — a genuine tree. `editor/groups.ts` holds the ONE resolution
+rule, shared by viewport picking, drag-move, box-select and the model tree.
+
+**Why a collection and not a `groupId` field on every element:** a field would mean touching all
+fifteen element interfaces, all fifteen Python models, and a migration back-filling `groupId: null`
+onto every object in every existing document — for a relationship that is naturally one-to-many and
+that `BooleanNode` already proves works as a referencing node. Nesting then comes free, and the
+cycle/dangling checks are the same shape `booleanTree.ts` already runs.
+
+**A group has no geometry and no renderer.** Selecting one highlights every member because
+`SceneContent` hands the renderers the EXPANDED leaf set — no renderer knows groups exist. This is
+what kept D5 from touching a single element renderer.
+
+**Interaction:**
+
+- Clicking a member selects the outermost ancestor group, unless the user has ENTERED a group that
+  contains it more directly (`store.enteredGroupId`). Double-click enters; `Escape` steps out, and
+  deliberately AFTER clearing the selection, so one Escape never does two things at once.
+- `Ctrl+G` / `Ctrl+Shift+G` plus Modify-panel buttons. A `Ctrl` chord rather than a letter: `A`–`Z`
+  were fully spoken for before this pass (D-025), and grouping is a modifier-flavoured action in
+  every tool that has it.
+- Entering or leaving a group CLEARS the selection, because what a given id *means* changes at that
+  boundary — keeping the old selection would leave the panel showing something the next click could
+  not reproduce.
+
+**Existing verbs, each following the `boolean` case already in the same switch:** `moveElement` and
+`transformElement` recurse to members (so the assembly keeps its shape rather than shearing);
+`duplicateElement` deep-copies the subtree into a NEW group, because sharing members would mean
+dragging the copy also moved the original; `deleteElement` on a group deletes its contents — a group
+is a unit, which is the whole point, and is exactly why **Ungroup is a separate verb** that removes
+only the boundary. Deleting a member prunes it and dissolves any group left with fewer than two, at
+a fixpoint, mirroring `pruneBooleanOperand`.
+
+**A group may span levels**, deliberately — a repeated stair-and-landing assembly crosses storeys.
+`levelIdOf` reports whichever level its first resolvable member is on, which is all the model tree
+asks of it.
+
+**Out of scope, stated:** group *instances* (edit one, every copy updates). That is a Type-level
+concept — Revit's family/assembly — and D-009's Category→Type→Instance layer is where it would
+belong, not here. A group is an isolation boundary, which is what the backlog item asked for.
+
+---
+
+## D-029 — C7: `views[]` becomes live, and a plan region assigns whole elements rather than splitting them (Phase 1B-iv)
+
+**Decision, part one — views become real.** `SavedView` had existed since C1 (schema v3) but nothing
+in `frontend/src` ever read `scene.views`; `Interaction.tsx` hardcoded `viewId: 'default'` in five
+places. C7 is the first feature that needs one, so `addLevel` now creates the level's plan view
+alongside it and the v8→v9 migration back-fills one per existing level. The active view is then
+DERIVED from the active level rather than being a second piece of state to keep in sync — and
+creating views eagerly is what stops a camera toggle from having to commit a scene mutation, and an
+undo entry, as a side effect.
+
+`SavedView.cutPlaneHeight` is REPLACED by `viewRange: ViewRange | null`, not kept alongside it: two
+fields describing the cut height is exactly the drift the TS/Python fixture lock exists to prevent.
+The migration is a lossless rewrite — the stored absolute height becomes a level-relative one, so a
+v8 view pinned to a level at 3 m with a cut at 4.2 m becomes a 1.2 m cut height describing the
+identical plane.
+
+**Decision, part two — how a region reaches the renderer, which is the part that mattered.** The
+obvious implementation is to clip the base render to the *complement* of the region and draw the
+region separately. That does not work: three.js clipping planes intersect half-spaces, so the
+complement of an arbitrary polygon is not expressible, and a second pass over the same geometry
+z-fights. Instead, **elements are partitioned before rendering**: `shared/geometry/viewRange.ts`
+gives every element a plan anchor point, `regionAt` decides which region owns it, and `SceneContent`
+renders one `ClippedGroup` per partition. No geometry is duplicated, no convexity constraint applies,
+and an arbitrary polygon works.
+
+**The scoped refusal, and it is deliberate and visible:** *an element belongs WHOLLY to whichever
+region contains its plan anchor. Nothing is split at a region boundary.* A wall running from the
+low-cut area into the high-cut area is cut at one height along its whole length. Splitting would
+require clipping each element in its own local frame against an arbitrary polygon — a CSG problem
+D-005 and D-019 both deliberately keep out of the wall path, and one whose result could not be
+expressed as `Box3D`s at all. Region boundaries are drawn as a dashed outline in plan precisely so
+the rule is visible rather than a surprise, and `validatePlanRegion` reports overlaps by name rather
+than leaving the user to guess which one won.
+
+`planAnchor` therefore has to answer for EVERY element kind — a kind with no anchor would silently
+fall outside every region and always use the view's default range, which is the quiet wrong answer
+this whole entry exists to avoid. It generalises `editor/selection.ts`'s `anchorPoints`, which
+covered only six of fifteen kinds, and a test iterates `ELEMENT_COLLECTIONS` to prove there are no
+gaps. A curved wall anchors at its APEX, not its chord midpoint, because a strongly bowed wall's
+material is nowhere near its chord.
+
+**Tool:** a `planregion` loop tool, drawn exactly like slab/room/ceiling, with **no single-letter
+shortcut** — D-025 recorded that `A`–`Z` were already fully spoken for, and nothing requires a tool
+to have a letter. It sits in a new "View" ribbon group, because it authors how the drawing is cut
+rather than what the model contains.
+
+**Out of scope, stated:** cut-vs-projection LINE WEIGHTS and `<Beyond>` styling are C6, a separate
+backlog item; `viewRange.viewDepth` here extends what is drawn, it does not restyle it. `cropRegion`
+and `visibleLevelIds` stay dormant on `SavedView`.
+
+**Found during the live check, and worth recording because it limits what C7 can currently show:** a
+wall cut mid-height renders as *nothing* in plan, because clipping leaves an open top and the
+remaining interior faces are back-facing. This is pre-existing and unrelated to the view range — it
+is exactly the gap C6 (poché / derived 2D linework) exists to close — but it means the cut-height
+control is easiest to appreciate today on elements whose material sits below the cut. Verified
+against real rendered materials instead: three partitions in one plan view resolving to three
+different clip bands.
+
+---
+
+## D-030 — C8: underlay is a per-view level reference, cut at ITS OWN range (Phase 1B-iv)
+
+**Decision:** `SavedView.underlayLevelId: string | null`. In plan, that level is drawn whole, as flat
+halftone, non-interactive, and clipped by **its own** plan view's `ViewRange` rather than the active
+one's — which is the entire point of the feature: you want to see the floor below cut at *its* door
+height, not at yours. Confirmed live: with the active level clipped at 1.2/0, the underlaid level
+resolved to 4.0/2.8.
+
+**Not a plan region, and it does not reuse that path.** A region is a sub-area of *this* level's plan;
+an underlay is a *different level's* plan drawn whole. What the two share is `clipBandFor`, so
+"resolve a range against the level it belongs to" has one implementation.
+
+**Distinct from the existing `ghostBelowEnabled`, which is unchanged:**
+
+| | `ghostBelowEnabled` | underlay |
+|---|---|---|
+| scope | every level below | exactly one chosen level, above **or** below |
+| where | 3D and plan | plan only |
+| stored | store flag, session-only | on the `SavedView`, saved with the project |
+| look | 0.18 opacity, each element's own material | halftone: one flat `--underlay-ink`, 0.28 |
+
+The underlay drops its materials for a single desaturated ink rather than dimming them, so an
+underlaid wall can never be mistaken for a faint real one — and it overrides every visibility rule
+that would otherwise hide it (isolate-level, hide-above), because it is shown on purpose.
+
+**Consequence — one shared `pickProps`.** C8 added a second reason an element can be
+non-interactive, and five renderers had each inlined the same four handlers plus the same `raycast`
+null-out. Five hand-copied versions of that rule would have been five chances to forget one, so it
+became a single exported helper alongside `surfaceProps`, and every renderer now routes through it.
+
+**Deleting a level** takes its own views and their plan regions with it, but a view that merely
+referenced it as an underlay just loses the underlay — the view itself is perfectly valid without
+one.

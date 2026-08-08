@@ -305,6 +305,51 @@ export const IconSpotSlope = (p: IconProps) => (
   </Svg>
 )
 
+/**
+ * Curtain wall (B4): a mullion/panel grid seen face-on. Filled like the other DRAWING tools, with
+ * the framing drawn heavier than the glazing so the grid — the thing the type actually controls —
+ * is what reads at 16px.
+ */
+export const IconCurtainWall = (p: IconProps) => (
+  <SvgFill {...p}>
+    <path d="M1.5 1.5h13v13h-13z" opacity="0.18" />
+    <path
+      d="M1.5 1.5h13v13h-13z M6 1.5v13M10 1.5v13M1.5 6h13M1.5 10h13"
+      stroke="currentColor"
+      strokeWidth="1.1"
+      fill="none"
+    />
+  </SvgFill>
+)
+
+/**
+ * Plan region (C7): a dashed sub-area inside a plan. Stroked rather than filled because it is a
+ * VIEW tool — it authors how the drawing is cut, not what the model contains.
+ */
+export const IconPlanRegion = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M1.5 3.5h13v9h-13z" />
+    <path d="M5 6h6v4H5z" strokeDasharray="1.6 1.2" />
+  </Svg>
+)
+
+/** A wall join (A9): two runs meeting at a clean mitred corner. */
+export const IconJoin = (p: IconProps) => (
+  <SvgFill {...p}>
+    <path d="M1 6.2h7.8L12 9.4v5.4H8.4V10.9L6.6 9.8H1z" opacity="0.32" />
+    <path d="M1 6.2h6.6l2 2-1.3 1.3-1.4-1.4H1z" />
+    <path d="M8.4 7.6l1.3-1.3 2.3 2.3v6.2h-1.8V9.4z" />
+  </SvgFill>
+)
+
+/** A group (D5): several elements inside one dashed isolation boundary. */
+export const IconGroup = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M1.5 1.5h13v13h-13z" strokeDasharray="1.8 1.4" />
+    <path d="M4 4.5h3.5v3.5H4zM8.5 7.5h3.5v4H8.5z" />
+  </Svg>
+)
+
 // ---- Actions (stroke) ------------------------------------------------------
 
 export const IconUndo = (p: IconProps) => (

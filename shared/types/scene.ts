@@ -13,7 +13,7 @@
 export type Vec2 = [number, number]
 export type Vec3 = [number, number, number]
 
-export const SCHEMA_VERSION = 8 as const
+export const SCHEMA_VERSION = 9 as const
 
 // ---------------------------------------------------------------------------
 // Materials
@@ -55,6 +55,7 @@ export type TypeCategory =
   | 'stair'
   | 'railing'
   | 'ceiling'
+  | 'curtainWall'
 
 export interface WallTypeDef {
   id: string
@@ -224,6 +225,45 @@ export interface CeilingTypeDef {
   layers: MaterialLayer[]
 }
 
+/**
+ * How one direction of a curtain-wall grid is divided (B4). Every variant produces bay POSITIONS;
+ * a panel is then whatever falls between two adjacent lines — panels are never sized directly,
+ * which is the defining property of a glazing system.
+ */
+export type GridRule =
+  /** Exactly `count` equal bays. */
+  | { kind: 'fixedNumber'; count: number }
+  /** Bays of exactly `spacing`, with whatever is left over becoming a shorter final bay. */
+  | { kind: 'fixedDistance'; spacing: number }
+  /** The fewest EQUAL bays such that none exceeds `spacing`. */
+  | { kind: 'maximumSpacing'; spacing: number }
+
+/**
+ * A curtain wall (B4) — a mullion/panel grid, not a layered assembly. Deliberately its own
+ * category rather than a `WallTypeDef` variant: it has no `layers`, so `assemblyThickness` is
+ * meaningless for it, and it takes no `Opening`s. See DECISIONS.md D-027.
+ *
+ * The grid lives on the TYPE, so editing it re-grids every instance (D-009). There is no panel
+ * width or height field anywhere by design.
+ */
+export interface CurtainWallTypeDef {
+  id: string
+  category: 'curtainWall'
+  name: string
+  /** Division along the length of the baseline. */
+  gridU: GridRule
+  /** Division up the height. */
+  gridV: GridRule
+  /** Mullion size in the plane of the wall (bay-facing width). */
+  mullionWidth: number
+  /** Mullion size through the wall — the curtain wall's overall thickness. */
+  mullionDepth: number
+  /** Glazing thickness; centred in the mullion depth. */
+  panelThickness: number
+  panelMaterial: string
+  mullionMaterial: string
+}
+
 export type ElementTypeDef =
   | WallTypeDef
   | DoorTypeDef
@@ -237,6 +277,7 @@ export type ElementTypeDef =
   | StairTypeDef
   | RailingTypeDef
   | CeilingTypeDef
+  | CurtainWallTypeDef
 
 // ---------------------------------------------------------------------------
 // Levels
@@ -297,6 +338,77 @@ export interface Wall {
   /** Swaps which side is "exterior". The location line is the flip pivot. */
   flipped: boolean
   roomBounding: boolean
+}
+
+// ---------------------------------------------------------------------------
+// Wall joins (A9 — see DECISIONS.md D-026)
+// ---------------------------------------------------------------------------
+
+/**
+ * How the members of a join meet. `miter` cuts both walls on the angle bisector — only correct
+ * when they share a thickness; `butt` runs one wall through and trims the others to its face.
+ */
+export type WallJoinStyle = 'miter' | 'butt'
+
+/**
+ * An explicit cleanup relationship between walls meeting at a point (A9).
+ *
+ * A first-class object rather than a field on `Wall`, because at a T- or X-junction a stem meets
+ * another wall's MIDDLE, not its end — an end-referencing field could not express that. Created by
+ * the "Join walls" verb over an existing selection and deleted to unjoin, exactly like `BooleanNode`
+ * (D-019). Joins carry no geometry: `shared/geometry/wallJoin.ts` derives every trim and mitre
+ * angle from the members' current baselines, so a join survives moving the walls it holds.
+ */
+export interface WallJoin {
+  id: string
+  levelId: string
+  /** The walls meeting here (2–4). Order is irrelevant; the resolver derives each wall's role. */
+  memberIds: string[]
+  /** Where they meet, in scene 2D — the point the verb found when the join was made. */
+  point: Vec2
+  style: WallJoinStyle
+  /** For a butt: which wall runs THROUGH, the others trimming to its face. null = auto-pick. */
+  throughId: string | null
+}
+
+// ---------------------------------------------------------------------------
+// Curtain walls (B4 — see DECISIONS.md D-027)
+// ---------------------------------------------------------------------------
+
+/**
+ * A placed curtain wall. Reuses `Baseline` and the `TopConstraint` union rather than inventing
+ * bespoke placement fields, so it behaves like every other linear element in the editor.
+ *
+ * v1 geometry (`shared/geometry/curtainWall.ts`) resolves STRAIGHT baselines only; an arc is
+ * refused rather than approximated (D-027), the same discipline D-018 applies to roofs.
+ */
+export interface CurtainWall {
+  id: string
+  typeId: string
+  levelId: string
+  baseline: Baseline
+  baseOffset: number
+  top: TopConstraint
+}
+
+// ---------------------------------------------------------------------------
+// Groups (D5 — see DECISIONS.md D-028)
+// ---------------------------------------------------------------------------
+
+/**
+ * An isolation boundary over existing elements. A top-level collection referencing ids rather than
+ * a `groupId` field on all fifteen element interfaces — the same referencing-node shape
+ * `BooleanNode` already proves out, and it makes nesting free: a member id may be another group's
+ * id, forming a tree that `editor/groups.ts` cycle-checks.
+ *
+ * A group has no geometry and no renderer. It moves, copies and deletes by recursing to its
+ * members, exactly as a boolean node moves by recursing to its operands.
+ */
+export interface ElementGroup {
+  id: string
+  name: string
+  /** Element ids, or other group ids. */
+  memberIds: string[]
 }
 
 // ---------------------------------------------------------------------------
@@ -536,6 +648,28 @@ export interface FurnitureItem {
 
 export type ViewProjection = 'orthographic' | 'perspective'
 
+/**
+ * A plan view's vertical extent (C7). Every value is an offset above the view's OWN level
+ * elevation, never an absolute world Y — so raising a storey carries its view range with it, the
+ * same reasoning `TopConstraint`'s `level` variant uses.
+ *
+ * Replaced `SavedView.cutPlaneHeight` in schema v9: two fields describing the cut height is exactly
+ * the drift the TS/Python fixture lock exists to prevent.
+ */
+export interface ViewRange {
+  /** The cut plane. Geometry above it is not drawn. Conventionally ~1.2 m, so doors read as gaps. */
+  cutHeight: number
+  /** Top of the range. Geometry above is not drawn even when it is below the cut. */
+  topOffset: number
+  /** Bottom of the range. Geometry below is not drawn. */
+  bottomOffset: number
+  /**
+   * Extra depth below `bottomOffset` that IS drawn, dimmed, as "beyond". 0 = nothing beyond.
+   * Cut-vs-projection LINE WEIGHTS are a separate backlog item (C6); this dims, it does not restyle.
+   */
+  viewDepth: number
+}
+
 export interface SavedView {
   id: string
   name: string
@@ -544,14 +678,38 @@ export interface SavedView {
   projection: ViewProjection
   /** Associated level (plan views pin to one); null = free 3D view. */
   levelId: string | null
-  /** World-Y elevation above which geometry is clipped; null = no cut. */
-  cutPlaneHeight: number | null
+  /** Vertical extent of a plan view; null = no cut (a 3D view). */
+  viewRange: ViewRange | null
+  /** Another level drawn halftone underneath this one (C8); null = no underlay. */
+  underlayLevelId: string | null
   /** Subset of levels to show; null = all visible. */
   visibleLevelIds: string[] | null
   /** 2D crop rectangle in scene coords; null = uncropped. */
   cropRegion: { min: Vec2; max: Vec2 } | null
   /** Work-plane elevation saved with the view so restoring it resumes drawing at the same plane. */
   workPlaneElevation: number
+}
+
+/**
+ * A sub-area of ONE plan view drawn at a different cut height (C7) — Revit's Plan Region.
+ *
+ * Scoped rule, deliberate and visible: an element belongs WHOLLY to whichever region contains its
+ * plan anchor point (`shared/geometry/viewRange.ts` `planAnchor`); nothing is split at a region
+ * boundary. See DECISIONS.md D-029 for why splitting is out of scope.
+ */
+export interface PlanRegion {
+  id: string
+  viewId: string
+  name: string
+  /** Closed polygon in scene 2D. */
+  boundary: Vec2[]
+  /** This region's own vertical extent, replacing the view's inside the boundary. */
+  viewRange: ViewRange
+}
+
+/** The vertical extent a fresh plan view gets: cut at 1.2 m, no depth beyond. */
+export function defaultViewRange(levelHeight: number): ViewRange {
+  return { cutHeight: 1.2, topOffset: levelHeight, bottomOffset: 0, viewDepth: 0 }
 }
 
 // ---------------------------------------------------------------------------
@@ -692,6 +850,7 @@ export interface SceneGraph {
   furniture: FurnitureItem[]
   materials: Material[]
   views: SavedView[]
+  planRegions: PlanRegion[]
   dimensions: Dimension[]
   annotations: Annotation[]
   roomTags: RoomTag[]
@@ -702,6 +861,9 @@ export interface SceneGraph {
   stairs: Stair[]
   railings: Railing[]
   ceilings: Ceiling[]
+  curtainWalls: CurtainWall[]
+  wallJoins: WallJoin[]
+  groups: ElementGroup[]
 }
 
 /** Every collection key that holds scene elements (BIM model objects). */
@@ -721,6 +883,11 @@ export const ELEMENT_COLLECTIONS = [
   'stairs',
   'railings',
   'ceilings',
+  'curtainWalls',
+  // Relationship nodes rather than geometry, but they are model (not view) objects and are
+  // selectable/deletable like any element — the same call `booleans` already makes.
+  'wallJoins',
+  'groups',
 ] as const
 
 export type ElementCollection = (typeof ELEMENT_COLLECTIONS)[number]
@@ -734,9 +901,22 @@ export const ANNOTATION_COLLECTIONS = [
 
 export type AnnotationCollection = (typeof ANNOTATION_COLLECTIONS)[number]
 
+/** Collections that define views themselves, rather than things drawn in one. */
+export const VIEW_COLLECTIONS = ['views', 'planRegions'] as const
+
+export type ViewCollection = (typeof VIEW_COLLECTIONS)[number]
+
 /** A partial update — only the changed collections are present. */
 export type SceneDiff = Partial<
-  Pick<SceneGraph, ElementCollection | AnnotationCollection | 'types' | 'levels' | 'materials' | 'views'>
+  Pick<
+    SceneGraph,
+    | ElementCollection
+    | AnnotationCollection
+    | ViewCollection
+    | 'types'
+    | 'levels'
+    | 'materials'
+  >
 >
 
 // ---------------------------------------------------------------------------
@@ -907,6 +1087,20 @@ export const DEFAULT_TYPES: ElementTypeDef[] = [
     name: 'Plaster ceiling — 15mm',
     layers: [{ material: 'mat-plaster-white', thickness: 0.015, function: 'finish' }],
   },
+  {
+    id: 'cwt-glazed-1500',
+    category: 'curtainWall',
+    name: 'Glazed curtain wall — 1.5m bays',
+    // maximumSpacing rather than fixedDistance so a wall of any length divides into EQUAL bays,
+    // which is what a glazing system actually does — no stray narrow panel at one end.
+    gridU: { kind: 'maximumSpacing', spacing: 1.5 },
+    gridV: { kind: 'maximumSpacing', spacing: 1.5 },
+    mullionWidth: 0.05,
+    mullionDepth: 0.15,
+    panelThickness: 0.024,
+    panelMaterial: 'mat-glass',
+    mullionMaterial: 'mat-steel',
+  },
 ]
 
 export function emptySceneGraph(projectId: string): SceneGraph {
@@ -926,6 +1120,7 @@ export function emptySceneGraph(projectId: string): SceneGraph {
     furniture: [],
     materials: DEFAULT_MATERIALS.map((m) => ({ ...m })),
     views: [],
+    planRegions: [],
     dimensions: [],
     annotations: [],
     roomTags: [],
@@ -936,7 +1131,37 @@ export function emptySceneGraph(projectId: string): SceneGraph {
     stairs: [],
     railings: [],
     ceilings: [],
+    curtainWalls: [],
+    wallJoins: [],
+    groups: [],
   }
+}
+
+/**
+ * The plan `SavedView` that accompanies a level (C7). Created alongside every level rather than
+ * lazily on first use, so entering plan mode never has to commit a scene mutation (and an undo
+ * entry) behind a camera button. `id` is derived from the level's, which keeps the pairing
+ * inspectable in a saved document and makes the lookup below a pure function of the level.
+ */
+export function planViewFor(level: Level): SavedView {
+  return {
+    id: `view-plan-${level.id}`,
+    name: `${level.name} — Plan`,
+    cameraPosition: [6, 60, 6],
+    cameraTarget: [6, 0, 6],
+    projection: 'orthographic',
+    levelId: level.id,
+    viewRange: defaultViewRange(level.height),
+    underlayLevelId: null,
+    visibleLevelIds: null,
+    cropRegion: null,
+    workPlaneElevation: level.elevation,
+  }
+}
+
+/** The plan view pinned to a level, if one exists. */
+export function findPlanView(scene: SceneGraph, levelId: string): SavedView | undefined {
+  return scene.views.find((v) => v.levelId === levelId && v.viewRange !== null)
 }
 
 // ---------------------------------------------------------------------------
@@ -983,6 +1208,14 @@ export function findRailingType(scene: SceneGraph, typeId: string): RailingTypeD
 export function findCeilingType(scene: SceneGraph, typeId: string): CeilingTypeDef | undefined {
   const t = findType(scene, typeId)
   return t?.category === 'ceiling' ? t : undefined
+}
+
+export function findCurtainWallType(
+  scene: SceneGraph,
+  typeId: string,
+): CurtainWallTypeDef | undefined {
+  const t = findType(scene, typeId)
+  return t?.category === 'curtainWall' ? t : undefined
 }
 
 export function findLevel(scene: SceneGraph, levelId: string): Level | undefined {

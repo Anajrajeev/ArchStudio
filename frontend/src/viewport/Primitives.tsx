@@ -12,7 +12,6 @@
  *    results simply are not drawn yet; primitives render immediately and need no CSG at all.
  */
 import { useEffect, useMemo, useState } from 'react'
-import type { ThreeEvent } from '@react-three/fiber'
 import { Edges } from '@react-three/drei'
 import * as THREE from 'three'
 import {
@@ -30,7 +29,7 @@ import {
   type CsgModule,
 } from '../geometry/evaluateBoolean'
 import { materialColor } from '../scene/materials'
-import type { RenderOpts } from './Elements'
+import { pickProps, surfaceProps, visible, type RenderOpts } from './Elements'
 
 /**
  * Load the CSG module once the scene needs it. Returns null until then, so a project with no
@@ -55,12 +54,12 @@ export function Primitives({ opts, levelId }: { opts: RenderOpts; levelId: strin
   const { scene } = opts
 
   const visiblePrimitives = useMemo(
-    () => freePrimitives(scene).filter((p) => p.levelId === levelId),
-    [scene, levelId],
+    () => visible(opts, freePrimitives(scene).filter((p) => p.levelId === levelId)),
+    [opts, scene, levelId],
   )
   const roots = useMemo(
-    () => rootBooleanNodes(scene).filter((b) => b.levelId === levelId),
-    [scene, levelId],
+    () => visible(opts, rootBooleanNodes(scene).filter((b) => b.levelId === levelId)),
+    [opts, scene, levelId],
   )
 
   const csg = useCsg(roots.length > 0)
@@ -88,7 +87,7 @@ function SolidMesh({
   color: string
   opts: RenderOpts
 }) {
-  const { theme, selectedIds, hoveredId, ghost, onPick, onHover } = opts
+  const { theme, selectedIds, hoveredId, ghost } = opts
   const selected = selectedIds.includes(id)
   const hovered = hoveredId === id
 
@@ -97,27 +96,10 @@ function SolidMesh({
       geometry={geometry}
       castShadow
       receiveShadow
-      onPointerDown={ghost ? undefined : (e: ThreeEvent<MouseEvent>) => onPick(id, e)}
-      onPointerOver={
-        ghost
-          ? undefined
-          : (e: ThreeEvent<MouseEvent>) => {
-              e.stopPropagation()
-              onHover(id)
-            }
-      }
-      onPointerOut={ghost ? undefined : () => onHover(null)}
-      raycast={ghost ? () => null : undefined}
+      {...pickProps(opts, id)}
     >
       <meshStandardMaterial
-        color={selected ? theme.select : color}
-        emissive={selected ? theme.select : hovered ? theme.prehighlight : '#000000'}
-        emissiveIntensity={selected ? 0.35 : hovered ? 0.18 : 0}
-        transparent={ghost}
-        opacity={ghost ? 0.18 : 1}
-        depthWrite={!ghost}
-        roughness={0.85}
-        metalness={0.02}
+        {...surfaceProps(color, selected, hovered, ghost, theme, opts.underlay)}
       />
       {selected && !ghost && <Edges threshold={20} color={theme.select} />}
     </mesh>

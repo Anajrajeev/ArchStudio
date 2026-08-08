@@ -1,4 +1,4 @@
-"""Pydantic v2 models for the ArchStudio scene graph — schema v8.
+"""Pydantic v2 models for the ArchStudio scene graph — schema v9.
 
 These MUST stay in sync with `shared/types/scene.ts`, which is the canonical schema.
 The sections below appear in the same order and carry the same banner comments as that
@@ -23,7 +23,7 @@ from pydantic import BaseModel, Field
 Vec2 = tuple[float, float]
 Vec3 = tuple[float, float, float]
 
-SCHEMA_VERSION: Final = 8
+SCHEMA_VERSION: Final = 9
 
 # ---------------------------------------------------------------------------
 # Materials
@@ -67,6 +67,7 @@ TypeCategory = Literal[
     "stair",
     "railing",
     "ceiling",
+    "curtainWall",
 ]
 
 
@@ -285,6 +286,54 @@ class CeilingTypeDef(BaseModel):
     layers: list[MaterialLayer] = Field(min_length=1)
 
 
+class GridFixedNumber(BaseModel):
+    """Exactly `count` equal bays."""
+
+    kind: Literal["fixedNumber"]
+    count: int = Field(gt=0)
+
+
+class GridFixedDistance(BaseModel):
+    """Bays of exactly `spacing`, with the remainder becoming a shorter final bay."""
+
+    kind: Literal["fixedDistance"]
+    spacing: float = Field(gt=0)
+
+
+class GridMaximumSpacing(BaseModel):
+    """The fewest EQUAL bays such that none exceeds `spacing`."""
+
+    kind: Literal["maximumSpacing"]
+    spacing: float = Field(gt=0)
+
+
+GridRule = Annotated[
+    GridFixedNumber | GridFixedDistance | GridMaximumSpacing, Field(discriminator="kind")
+]
+
+
+class CurtainWallTypeDef(BaseModel):
+    """A curtain wall (B4): a mullion/panel grid, not a layered assembly.
+
+    Its own category rather than a WallTypeDef variant — it has no `layers`, so
+    `assembly_thickness` is meaningless for it, and it takes no Openings. See D-027.
+    Panels are sized BY the grid; there is no panel width or height field by design.
+    """
+
+    id: str
+    category: Literal["curtainWall"]
+    name: str
+    grid_u: GridRule = Field(alias="gridU")
+    grid_v: GridRule = Field(alias="gridV")
+    mullion_width: float = Field(gt=0, alias="mullionWidth")
+    mullion_depth: float = Field(gt=0, alias="mullionDepth")
+    panel_thickness: float = Field(gt=0, alias="panelThickness")
+    panel_material: str = Field(alias="panelMaterial")
+    mullion_material: str = Field(alias="mullionMaterial")
+
+    model_config = {"populate_by_name": True}
+
+
 ElementTypeDef = Annotated[
     WallTypeDef
     | DoorTypeDef
@@ -297,7 +346,8 @@ ElementTypeDef = Annotated[
     | PrimitiveTypeDef
     | StairTypeDef
     | RailingTypeDef
-    | CeilingTypeDef,
+    | CeilingTypeDef
+    | CurtainWallTypeDef,
     Field(discriminator="category"),
 ]
 
@@ -396,6 +446,74 @@ class Wall(BaseModel):
     #: Swaps which side is "exterior". The location line is the flip pivot.
     flipped: bool
     room_bounding: bool = Field(alias="roomBounding")
+
+    model_config = {"populate_by_name": True}
+
+
+# ---------------------------------------------------------------------------
+# Wall joins (A9 — see DECISIONS.md D-026)
+# ---------------------------------------------------------------------------
+
+WallJoinStyle = Literal["miter", "butt"]
+
+
+class WallJoin(BaseModel):
+    """An explicit cleanup relationship between walls meeting at a point.
+
+    A first-class object rather than a field on Wall, because at a T- or X-junction a stem
+    meets another wall's MIDDLE, not its end. Carries no geometry: every trim and mitre angle
+    is derived from the members' current baselines by `shared/geometry/wallJoin.ts`.
+    """
+
+    id: str
+    level_id: str = Field(alias="levelId")
+    #: The walls meeting here (2-4). Order is irrelevant; the resolver derives each wall's role.
+    member_ids: list[str] = Field(min_length=2, alias="memberIds")
+    point: Vec2
+    style: WallJoinStyle
+    #: For a butt: which wall runs THROUGH, the others trimming to its face. None = auto-pick.
+    through_id: str | None = Field(alias="throughId", default=None)
+
+    model_config = {"populate_by_name": True}
+
+
+# ---------------------------------------------------------------------------
+# Curtain walls (B4 — see DECISIONS.md D-027)
+# ---------------------------------------------------------------------------
+
+
+class CurtainWall(BaseModel):
+    """A placed curtain wall, reusing Baseline and the TopConstraint union.
+
+    v1 geometry resolves STRAIGHT baselines only; an arc is refused, not approximated.
+    """
+
+    id: str
+    type_id: str = Field(alias="typeId")
+    level_id: str = Field(alias="levelId")
+    baseline: Baseline
+    base_offset: float = Field(alias="baseOffset")
+    top: TopConstraint
+
+    model_config = {"populate_by_name": True}
+
+
+# ---------------------------------------------------------------------------
+# Groups (D5 — see DECISIONS.md D-028)
+# ---------------------------------------------------------------------------
+
+
+class ElementGroup(BaseModel):
+    """An isolation boundary over existing elements.
+
+    A member id may be another group's id, forming a tree — the same referencing-node shape
+    BooleanNode uses. A group has no geometry and no renderer.
+    """
+
+    id: str
+    name: str
+    #: Element ids, or other group ids.
+    member_ids: list[str] = Field(alias="memberIds")
 
     model_config = {"populate_by_name": True}
 
@@ -682,6 +800,25 @@ class CropRegion(BaseModel):
     max: Vec2
 
 
+class ViewRange(BaseModel):
+    """A plan view's vertical extent (C7).
+
+    Every value is an offset above the view's OWN level elevation, never an absolute world Y —
+    so raising a storey carries its view range with it. Replaced `cut_plane_height` in v9.
+    """
+
+    #: The cut plane. Geometry above is not drawn. Conventionally ~1.2 m.
+    cut_height: float = Field(alias="cutHeight")
+    #: Top of the range. Geometry above is not drawn even when below the cut.
+    top_offset: float = Field(alias="topOffset")
+    #: Bottom of the range. Geometry below is not drawn.
+    bottom_offset: float = Field(alias="bottomOffset")
+    #: Extra depth below `bottom_offset` that IS drawn, dimmed, as "beyond". 0 = none.
+    view_depth: float = Field(ge=0, alias="viewDepth")
+
+    model_config = {"populate_by_name": True}
+
+
 class SavedView(BaseModel):
     id: str
     name: str
@@ -690,13 +827,31 @@ class SavedView(BaseModel):
     projection: ViewProjection
     #: Associated level (plan views pin to one); None = free 3D view.
     level_id: str | None = Field(alias="levelId", default=None)
-    #: World-Y elevation above which geometry is clipped; None = no cut.
-    cut_plane_height: float | None = Field(alias="cutPlaneHeight", default=None)
+    #: Vertical extent of a plan view; None = no cut (a 3D view).
+    view_range: ViewRange | None = Field(alias="viewRange", default=None)
+    #: Another level drawn halftone underneath this one (C8); None = no underlay.
+    underlay_level_id: str | None = Field(alias="underlayLevelId", default=None)
     #: Subset of levels to show; None = all visible.
     visible_level_ids: list[str] | None = Field(alias="visibleLevelIds", default=None)
     crop_region: CropRegion | None = Field(alias="cropRegion", default=None)
     #: Work-plane elevation, so restoring the view resumes drawing at the same plane.
     work_plane_elevation: float = Field(alias="workPlaneElevation")
+
+    model_config = {"populate_by_name": True}
+
+
+class PlanRegion(BaseModel):
+    """A sub-area of ONE plan view drawn at a different cut height (C7).
+
+    An element belongs WHOLLY to whichever region contains its plan anchor point; nothing is
+    split at a region boundary. See DECISIONS.md D-029.
+    """
+
+    id: str
+    view_id: str = Field(alias="viewId")
+    name: str
+    boundary: list[Vec2] = Field(min_length=3)
+    view_range: ViewRange = Field(alias="viewRange")
 
     model_config = {"populate_by_name": True}
 
@@ -844,7 +999,7 @@ class SceneGraph(BaseModel):
     would pass while the two schemas diverged — the exact failure this file exists to prevent.
     """
 
-    schema_version: Annotated[Literal[8], Field(alias="schemaVersion")] = SCHEMA_VERSION
+    schema_version: Annotated[Literal[9], Field(alias="schemaVersion")] = SCHEMA_VERSION
     project_id: str = Field(alias="projectId")
     units: Units = "m"
     types: list[ElementTypeDef] = []
@@ -859,6 +1014,7 @@ class SceneGraph(BaseModel):
     furniture: list[FurnitureItem] = []
     materials: list[Material] = []
     views: list[SavedView] = []
+    plan_regions: list[PlanRegion] = Field(alias="planRegions", default=[])
     dimensions: list[Dimension] = []
     annotations: list[Annotation] = []
     room_tags: list[RoomTag] = Field(alias="roomTags", default=[])
@@ -869,6 +1025,9 @@ class SceneGraph(BaseModel):
     stairs: list[Stair] = []
     railings: list[Railing] = []
     ceilings: list[Ceiling] = []
+    curtain_walls: list[CurtainWall] = Field(alias="curtainWalls", default=[])
+    wall_joins: list[WallJoin] = Field(alias="wallJoins", default=[])
+    groups: list[ElementGroup] = []
 
     model_config = {"populate_by_name": True, "extra": "forbid"}
 
@@ -904,6 +1063,17 @@ class SceneGraph(BaseModel):
     def find_ceiling_type(self, type_id: str) -> CeilingTypeDef | None:
         t = self.find_type(type_id)
         return t if isinstance(t, CeilingTypeDef) else None
+
+    def find_curtain_wall_type(self, type_id: str) -> CurtainWallTypeDef | None:
+        t = self.find_type(type_id)
+        return t if isinstance(t, CurtainWallTypeDef) else None
+
+    def find_plan_view(self, level_id: str) -> SavedView | None:
+        """The plan view pinned to a level, if one exists (C7)."""
+        return next(
+            (v for v in self.views if v.level_id == level_id and v.view_range is not None),
+            None,
+        )
 
     def find_level(self, level_id: str) -> Level | None:
         return next((lv for lv in self.levels if lv.id == level_id), None)
@@ -948,6 +1118,11 @@ ELEMENT_COLLECTIONS: Final[tuple[str, ...]] = (
     "stairs",
     "railings",
     "ceilings",
+    "curtainWalls",
+    # Relationship nodes rather than geometry, but they are model (not view) objects and are
+    # selectable/deletable like any element — the same call `booleans` already makes.
+    "wallJoins",
+    "groups",
 )
 
 #: Collections that hold view-scoped annotation objects.
@@ -955,6 +1130,12 @@ ANNOTATION_COLLECTIONS: Final[tuple[str, ...]] = (
     "dimensions",
     "annotations",
     "roomTags",
+)
+
+#: Collections that define views themselves, rather than things drawn in one.
+VIEW_COLLECTIONS: Final[tuple[str, ...]] = (
+    "views",
+    "planRegions",
 )
 
 
@@ -973,6 +1154,7 @@ class SceneDiff(BaseModel):
     furniture: list[FurnitureItem] | None = None
     materials: list[Material] | None = None
     views: list[SavedView] | None = None
+    plan_regions: list[PlanRegion] | None = Field(alias="planRegions", default=None)
     dimensions: list[Dimension] | None = None
     annotations: list[Annotation] | None = None
     room_tags: list[RoomTag] | None = Field(alias="roomTags", default=None)
@@ -983,6 +1165,9 @@ class SceneDiff(BaseModel):
     stairs: list[Stair] | None = None
     railings: list[Railing] | None = None
     ceilings: list[Ceiling] | None = None
+    curtain_walls: list[CurtainWall] | None = Field(alias="curtainWalls", default=None)
+    wall_joins: list[WallJoin] | None = Field(alias="wallJoins", default=None)
+    groups: list[ElementGroup] | None = None
 
     model_config = {"populate_by_name": True}
 

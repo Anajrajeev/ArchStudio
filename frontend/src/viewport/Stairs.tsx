@@ -4,17 +4,16 @@
  * ramped-top machinery B1 added, since every step is a flat-topped solid.
  */
 import { useMemo } from 'react'
-import type { ThreeEvent } from '@react-three/fiber'
 import { Edges } from '@react-three/drei'
 import { resolveStair, stairSolidBoxes } from '../../../shared/geometry/stair'
 import { materialColor } from '../scene/materials'
-import type { RenderOpts } from './Elements'
+import { pickProps, surfaceProps, visible, type RenderOpts } from './Elements'
 
 export function Stairs({ opts, levelId }: { opts: RenderOpts; levelId: string }) {
   const { scene } = opts
   const stairs = useMemo(
-    () => scene.stairs.filter((s) => s.levelId === levelId),
-    [scene.stairs, levelId],
+    () => visible(opts, scene.stairs.filter((s) => s.levelId === levelId)),
+    [opts, scene.stairs, levelId],
   )
   return (
     <>
@@ -26,7 +25,7 @@ export function Stairs({ opts, levelId }: { opts: RenderOpts; levelId: string })
 }
 
 function StairMesh({ stairId, opts }: { stairId: string; opts: RenderOpts }) {
-  const { scene, theme, selectedIds, hoveredId, ghost, onPick, onHover } = opts
+  const { scene, theme, selectedIds, hoveredId, ghost } = opts
   const stair = scene.stairs.find((s) => s.id === stairId)
 
   const boxes = useMemo(() => {
@@ -44,30 +43,13 @@ function StairMesh({ stairId, opts }: { stairId: string; opts: RenderOpts }) {
 
   return (
     <group
-      onPointerDown={ghost ? undefined : (e: ThreeEvent<MouseEvent>) => onPick(stairId, e)}
-      onPointerOver={
-        ghost
-          ? undefined
-          : (e: ThreeEvent<MouseEvent>) => {
-              e.stopPropagation()
-              onHover(stairId)
-            }
-      }
-      onPointerOut={ghost ? undefined : () => onHover(null)}
-      raycast={ghost ? () => null : undefined}
+      {...pickProps(opts, stairId)}
     >
       {boxes.map((box, i) => (
         <mesh key={i} position={box.center} rotation={[0, box.rotationY, 0]} castShadow receiveShadow>
           <boxGeometry args={box.size} />
           <meshStandardMaterial
-            color={selected ? theme.select : color}
-            emissive={selected ? theme.select : hovered ? theme.prehighlight : '#000000'}
-            emissiveIntensity={selected ? 0.35 : hovered ? 0.18 : 0}
-            transparent={ghost}
-            opacity={ghost ? 0.18 : 1}
-            depthWrite={!ghost}
-            roughness={0.85}
-            metalness={0.02}
+            {...surfaceProps(color, selected, hovered, ghost, theme, opts.underlay)}
           />
           {selected && !ghost && <Edges threshold={20} color={theme.select} />}
         </mesh>

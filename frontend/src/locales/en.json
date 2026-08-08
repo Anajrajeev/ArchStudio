@@ -27,7 +27,9 @@
       "stair": "Stair",
       "railing": "Railing",
       "ceiling": "Ceiling",
-      "spot": "Spot annotation"
+      "spot": "Spot annotation",
+      "curtainwall": "Curtain wall",
+      "planregion": "Plan region"
     },
     "undo": "Undo",
     "redo": "Redo",
@@ -84,7 +86,18 @@
     "cut": "Cut",
     "intersect": "Intersect",
     "explode": "Explode boolean",
-    "voidToRoof": "Void to roof"
+    "voidToRoof": "Void to roof",
+    "join": "Wall join",
+    "joinStyle": "Corner",
+    "joinMiter": "Mitre",
+    "joinButt": "Butt",
+    "joinHint": "A mitre needs both walls to share a thickness; anything else butts.",
+    "joinWalls": "Join walls",
+    "unjoinWalls": "Unjoin",
+    "group": "Group",
+    "groupHint": "A group moves, copies and deletes as one. Double-click to edit inside it.",
+    "groupElements": "Group",
+    "ungroupElements": "Ungroup"
   },
   "viewport": {
     "emptyTitle": "Draw directly in the 3D view",
@@ -96,7 +109,18 @@
     "plan": "Plan",
     "threeD": "3D",
     "ortho": "Ortho",
-    "perspective": "Persp"
+    "perspective": "Persp",
+    "range": "View range",
+    "cutHeight": "Cut plane",
+    "topOffset": "Top",
+    "bottomOffset": "Bottom",
+    "viewDepth": "View depth",
+    "rangeHint": "Heights above this level's floor. The cut is what makes doors read as gaps.",
+    "underlay": "Underlay",
+    "underlayNone": "None",
+    "underlayHint": "Another level shown halftone, cut at its own height.",
+    "regions": "Plan regions",
+    "regionsHint": "Each region redraws its area at its own cut height."
   },
   "theme": {
     "toggle": "Toggle theme",
@@ -128,7 +152,11 @@
     "booleans": "Booleans",
     "stairs": "Stairs",
     "railings": "Railings",
-    "ceilings": "Ceilings"
+    "ceilings": "Ceilings",
+    "curtainWalls": "Curtain walls",
+    "wallJoins": "Wall joins",
+    "groups": "Groups",
+    "planRegions": "Plan regions"
   },
   "status": {
     "noSnap": "No snap",
@@ -166,7 +194,11 @@
       "boolean": "Boolean",
       "stair": "Stair",
       "railing": "Railing",
-      "ceiling": "Ceiling"
+      "ceiling": "Ceiling",
+      "curtainWall": "Curtain wall",
+      "wallJoin": "Wall join",
+      "group": "Group",
+      "planRegion": "Plan region"
     },
     "type": "Type",
     "duplicateType": "Duplicate type for this element",
@@ -284,7 +316,32 @@
     "annotationSpotCoordinate": "Spot coordinate",
     "annotationSpotSlope": "Spot slope",
     "openings": "Openings",
-    "openingRemove": "Remove"
+    "openingRemove": "Remove",
+    "gridU": "Bays along",
+    "gridV": "Bays up",
+    "gridRule": "Rule",
+    "gridFixedNumber": "Fixed count",
+    "gridFixedDistance": "Fixed spacing",
+    "gridMaximumSpacing": "Maximum spacing",
+    "gridCount": "Count",
+    "mullionWidth": "Mullion width",
+    "mullionDepth": "Mullion depth",
+    "panelThickness": "Panel thickness",
+    "panelMaterial": "Panel material",
+    "mullionMaterial": "Mullion material",
+    "panelsHint": "Panels are sized by the grid — there is nothing to set here.",
+    "joinStyle": "Corner",
+    "joinMiter": "Mitre",
+    "joinButt": "Butt",
+    "joinMembers": "Walls joined",
+    "joinThrough": "Runs through",
+    "joinThroughAuto": "Automatic (thicker wall)",
+    "groupName": "Name",
+    "groupMembers": "Members",
+    "groupEnter": "Edit inside group",
+    "groupExit": "Finish editing group",
+    "groupEntered": "Editing inside this group. Press Escape to finish.",
+    "regionName": "Name"
   },
   "chat": {
     "placeholder": "Describe what you want to design...",

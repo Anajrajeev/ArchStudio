@@ -183,6 +183,32 @@ function populatedSceneGraph(): SceneGraph {
         name: 'Plaster ceiling',
         layers: [{ material: 'mat-plaster-white', thickness: 0.015, function: 'finish' }],
       },
+      {
+        id: 'cwt-1',
+        category: 'curtainWall',
+        name: 'Glazed curtain wall',
+        gridU: { kind: 'maximumSpacing', spacing: 1.5 },
+        gridV: { kind: 'fixedNumber', count: 3 },
+        mullionWidth: 0.05,
+        mullionDepth: 0.15,
+        panelThickness: 0.024,
+        panelMaterial: 'mat-glass',
+        mullionMaterial: 'mat-steel',
+      },
+      {
+        // A second curtain-wall type purely so the THIRD GridRule variant is exercised too —
+        // cwt-1 covers `maximumSpacing` and `fixedNumber`, this one covers `fixedDistance`.
+        id: 'cwt-2',
+        category: 'curtainWall',
+        name: 'Storefront — 1.2m bays',
+        gridU: { kind: 'fixedDistance', spacing: 1.2 },
+        gridV: { kind: 'fixedDistance', spacing: 1.1 },
+        mullionWidth: 0.04,
+        mullionDepth: 0.1,
+        panelThickness: 0.02,
+        panelMaterial: 'mat-glass',
+        mullionMaterial: 'mat-steel',
+      },
     ],
     levels: [
       {
@@ -346,7 +372,8 @@ function populatedSceneGraph(): SceneGraph {
         cameraTarget: [0, 0, 0],
         projection: 'orthographic',
         levelId: 'lv1',
-        cutPlaneHeight: 1.2,
+        viewRange: { cutHeight: 1.2, topOffset: 3, bottomOffset: 0, viewDepth: 0.5 },
+        underlayLevelId: 'lv2',
         visibleLevelIds: ['lv1'],
         cropRegion: { min: [-1, -1], max: [7, 5] },
         workPlaneElevation: 0,
@@ -359,10 +386,25 @@ function populatedSceneGraph(): SceneGraph {
         cameraTarget: [0, 0, 0],
         projection: 'perspective',
         levelId: null,
-        cutPlaneHeight: null,
+        viewRange: null,
+        underlayLevelId: null,
         visibleLevelIds: null,
         cropRegion: null,
         workPlaneElevation: 0,
+      },
+    ],
+    planRegions: [
+      {
+        id: 'pregion1',
+        viewId: 'v1',
+        name: 'Stair void — raised cut',
+        boundary: [
+          [1, 1],
+          [3, 1],
+          [3, 3],
+          [1, 3],
+        ],
+        viewRange: { cutHeight: 2.4, topOffset: 3, bottomOffset: 0, viewDepth: 0 },
       },
     ],
     dimensions: [
@@ -574,19 +616,45 @@ function populatedSceneGraph(): SceneGraph {
         top: { kind: 'unconnected', height: 3 },
       },
     ],
+    curtainWalls: [
+      {
+        id: 'cw1',
+        typeId: 'cwt-1',
+        levelId: 'lv1',
+        baseline: { kind: 'line', start: [0, 4], end: [6, 4] },
+        baseOffset: 0,
+        top: { kind: 'level', levelId: 'lv2', offset: -0.2 },
+      },
+    ],
+    // w1 and w2 share the endpoint [6,0] — an L-corner, which is exactly what a join cleans up.
+    wallJoins: [
+      {
+        id: 'wj1',
+        levelId: 'lv1',
+        memberIds: ['w1', 'w2'],
+        point: [6, 0],
+        style: 'miter',
+        throughId: null,
+      },
+    ],
+    // Nested: g2 contains g1, which is what makes groups a tree rather than a flat tagging.
+    groups: [
+      { id: 'g1', name: 'Furniture set', memberIds: ['fu1', 'c1'] },
+      { id: 'g2', name: 'Living room layout', memberIds: ['g1', 'r1'] },
+    ],
   }
 }
 
 describe('golden scene-graph fixtures', () => {
-  it('the empty document still matches shared/fixtures/scene-v8-empty.json', async () => {
+  it('the empty document still matches shared/fixtures/scene-v9-empty.json', async () => {
     await expect(JSON.stringify(emptySceneGraph('fixture-project'), null, 2) + '\n').toMatchFileSnapshot(
-      '../../../shared/fixtures/scene-v8-empty.json',
+      '../../../shared/fixtures/scene-v9-empty.json',
     )
   })
 
-  it('the populated document still matches shared/fixtures/scene-v8-populated.json', async () => {
+  it('the populated document still matches shared/fixtures/scene-v9-populated.json', async () => {
     await expect(JSON.stringify(populatedSceneGraph(), null, 2) + '\n').toMatchFileSnapshot(
-      '../../../shared/fixtures/scene-v8-populated.json',
+      '../../../shared/fixtures/scene-v9-populated.json',
     )
   })
 
@@ -609,6 +677,6 @@ describe('golden scene-graph fixtures', () => {
 
   it('pins the schema version the fixtures were written for', () => {
     // A bump here is the signal to regenerate the fixtures AND update shared/python/models.py.
-    expect(SCHEMA_VERSION).toBe(8)
+    expect(SCHEMA_VERSION).toBe(9)
   })
 })

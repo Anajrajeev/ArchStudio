@@ -15,25 +15,50 @@
 
 | Gate | P1 items | P2 items | P3 items |
 |------|----------|----------|----------|
-| 1B-i core (A1/A2/A5, D1/D3/D4, E3/E4) | 8 / 8 done | 2 / 4 | — |
+| 1B-i core (A1/A2/A5, D1/D3/D4, E3/E4) | 8 / 8 done | 3 / 4 | — |
 | 1B-i documentation & annotation (C1–C3, A4) | 4 / 4 done | — | — |
-| 1B-ii (elements + perf + parity) | 8 / 8 done | 3 / 8 | — |
+| 1B-ii (elements + perf + parity) | 8 / 8 done | 5 / 8 | — |
 | Deferred to later phases | — | — | 12 |
 
-**1B-iii pass (this update):** landed 5 P2 items in one pass — A10, B5 (ceiling), B8 (slab
+**P2 items still open after this pass:** A6 (Tab-to-cycle snaps), C5 (section/elevation views),
+C6 (derived 2D linework — see the note under C7), D6 (constraints), D8 (angle-snap UI in the
+ribbon), E2 (bundle size), E6 (accessibility audit).
+
+**1B-iv pass (this update):** landed the five remaining hard P2 items in one pass — **A9** (wall
+joins), **B4** (curtain wall), **D5** (groups), **C7** (view range + plan regions), **C8**
+(underlay) — under a single schema bump to **v9**, with the Python mirror and golden fixtures moved
+in the same pass rather than as a follow-up. Each item needed a real design decision before code;
+all five are written up as **D-026 … D-030**.
+
+Two of them carry a deliberate scoped refusal in the D-018 tradition. **A9 joins at the ASSEMBLY
+level and will not wrap individual layers** — D-009 already declined to model a wall "core", and
+per-layer wrapping needs exactly that missing concept, so adding it is the prerequisite rather than
+a detail of this item. **C7 assigns each element wholly to one plan region by its anchor point and
+never splits one at a region boundary** — splitting would mean clipping each element in its own
+local frame against an arbitrary polygon, a CSG problem D-005/D-019 keep out of the wall path, and
+the result could not be expressed as `Box3D`s at all. Region boundaries are drawn dashed in plan
+precisely so that rule is visible rather than a surprise.
+
+**C7 also woke `views[]` up.** It had been dead schema since C1 — `frontend/src` never read
+`scene.views`, and `viewId: 'default'` was hardcoded in five places. Views are now created with
+their level, and the active view is derived from the active level rather than being a second piece
+of state to keep in sync.
+
+**1B-iii pass:** landed 5 P2 items — A10, B5 (ceiling), B8 (slab
 openings/shafts), C4 (spot elevation/coordinate/slope), D7 (repeat-last-operation). D7's P2 count
 isn't tracked in the gate table above (D5/D6/D8 predate a "D interaction" summary row and were
-never folded into either bucket; not touched here) — see its row in section D below for the
+never folded into either bucket) — see its row in section D below for the
 authoritative status.
 
-**Overall P1 count: 20 / 20 done — B1, B2, B3, D2/B7, E1 and E5 all landed this pass. The entire**
-**1B-i gate and all of 1B-ii's originally-scoped P1 items are now complete.** (B1's remainder —
+**Overall P1 count: 20 / 20 done — B1, B2, B3, D2/B7, E1 and E5 landed in the 1B-ii pass. The**
+**entire 1B-i gate and all of 1B-ii's originally-scoped P1 items are complete.** (B1's remainder —
 the *general*, non-rectangular / per-edge-angle roof solver — was always out of scope per D-018;
 what shipped is the wall-voiding case that WAS scoped, D-020.)
 
-**Quality gates as of the last update:** 880 frontend tests, **100 backend tests**, TypeScript
+**Quality gates as of this update:** **1020 frontend tests**, **114 backend tests**, TypeScript
 strict clean, ESLint clean (`--max-warnings 0`), `vite build` succeeds. Backend: ruff clean,
-`mypy --strict` clean, `shared/python/models.py` at 100% coverage.
+`mypy --strict` clean. Schema **v9**; `shared/fixtures/scene-v9-{empty,populated}.json` regenerated
+and parsed by both suites.
 
 **B7's outstanding visual check is now closed.** The Browser pane displayed correctly this
 session (unlike the prior one), so a primitive was placed and selected via real `computer` clicks
@@ -69,7 +94,7 @@ rendering at the correct size in the live 3D/plan viewport.
 | A6 | Tab-to-cycle competing snaps | P2 | ⬜ | |
 | A7 | One-shot snap overrides | P3 | ⏭️ | Running snaps are toggleable already; per-pick two-letter overrides are a power-user affordance, not a credibility gate. |
 | A8 | Furniture is a placeholder box | P3 | ⏭️ | The glTF catalog **is** Phase 5. `catalogId` is already plumbed through. |
-| A9 | Wall joins / cleanup | P2 | ⬜ | Visible at every corner in plan. |
+| A9 | Wall joins / cleanup | P2 | ✅ | **D-026.** A stored `WallJoin` (memberIds + point + style + optional `throughId`) created by a "Join walls" verb on a selection; unjoin is deleting it. Carries NO geometry — `shared/geometry/wallJoin.ts` re-derives every trim and mitre from the members' current baselines, so moving a joined wall keeps the corner clean. `Box3D` gains `endSkew`, the same shape of extension `topRamp` made for B1, routed through the existing `boxToTriMesh` path so viewport/export/box-select agree. **Solves:** equal-thickness L (true mitre, closed-form `tan σ = (m·dir)/(m·n)`), unequal-thickness L (butt: thicker runs through to the far face, other trims to the near face), T in both flavours (one wall through, or two collinear after a Split — a stem that stops short is EXTENDED to meet), X (no-op). **Refuses:** per-layer cleanup (permanently — D-009 declined the wall "core" concept it would need), curved walls, no vertical overlap, >4 members, no straight run among 3+, <10° crossings, and a join point more than a wall-length away. **Visually confirmed**: the two walls' end faces resolve to the *same two points* — outer (9.10, 2.15), inner (8.90, 2.35) — one shared mitre line, no overlap ridge, no notch. |
 | A10 | Multi-select editing in properties | P2 | ✅ | `PropertiesPanel`'s new `MultiProps`: when 2+ SAME-kind elements are selected, shows that kind's common instance fields (wall/slab/ceiling/column/beam/room/furniture/primitive/stair/railing/roof/annotation/dimension), seeded from the first element, committing to every selected id in ONE undo step. A type-level field (wall/slab/ceiling thickness) applies per DISTINCT type across the selection, not just the first element's. A mixed-kind selection keeps the existing hint. **Visually confirmed**: selected 2 columns, edited Rotation once, both rotated; one Undo reverted both. |
 
 ## B. Element types
@@ -79,7 +104,7 @@ rendering at the correct size in the live 3D/plan viewport.
 | B1 | Roof | P1 | ✅ | The roof element (schema v5, `shared/geometry/roof.ts`, `viewport/Roofs.tsx`, the `roof` tool, D-018) plus **wall voiding**, landed this pass as **D-020**: `Wall.top` gains a `{kind:'roof', roofId}` variant; `wallRoofRamp` resolves it to a front/back thickness ramp (a wedge cross-section) for a wall collinear with the roof's own eave line, refusing anything else per D-018's own rule. New `Box3D.topRamp` field, `boxToTriMesh`, and the "Void to roof" Modify-panel verb (`editor/roofVoid.ts`). Python mirror (`TopRoofConstraint`) landed in the same pass. **Still open, and always out of scope for this row:** the *general* non-rectangular / per-edge-angle straight-skeleton roof solver (D-018's own deferral) — B1's wall-voiding scope never depended on it, since a wall only qualifies against an eave line the current closed-form roof geometry already produces exactly. |
 | B2 | Stairs | P1 | ✅ | **D-021.** `StairTypeDef` (width, treadDepth) + `Stair` (reuses the wall/column `TopConstraint` union for its "top"; stores `desiredNumberOfRisers`). `shared/geometry/stair.ts`: `actualRiserHeight` is DERIVED from the resolved rise, never stored; one SOLID box per step (each reaching the base, like a real solid-core stair); Blondel comfort ratio (57–66cm) is *feedback* via `validateStair`, not a hard refusal. 2-click `stair` tool (`H`), Properties panel reusing `TopConstraintField`. `+21` geometry/mutation tests, `+3` gesture tests. |
 | B3 | Railing | P1 | ✅ | **D-021.** `RailingTypeDef` (height, post thickness/spacing) + `Railing` (an OPEN polyline path, ≥2 points — no "refuse the general case" needed since every segment is straight). `shared/geometry/railing.ts`: one rail box per path segment + posts every `postSpacing`, always forcing one at the exact path end. Needed a genuinely new tool CLASS: `isPathTool` collects unbounded points like a loop tool but never closes on the first click, finishing on Enter instead — wired through `Interaction.tsx`, `App.tsx`, and the gesture test harness identically. `+12` geometry tests, `+3` gesture tests. |
-| B4 | Curtain wall | P2 | ⬜ | Panels sized *by* the grid, never directly. |
+| B4 | Curtain wall | P2 | ✅ | **D-027.** A NEW element kind, not a `Wall` type: a wall is layers + openings, a curtain wall is a grid, and every field either needs would be dead on the other. `CurtainWallTypeDef` holds two `GridRule`s (`fixedNumber`/`fixedDistance`/`maximumSpacing`) plus mullion/panel sizes; the instance reuses `Baseline` and `TopConstraint`. **There is no panel width or height field anywhere** — a panel is whatever falls between two grid lines, which is the item's whole point. `curtainWallSolidBoxes` returns `{frame, panels}` already split by material so the renderer and exporter never re-derive it. Arc baselines refused with a message (a curved system is a faceted one — a second geometry case), as are per-cell panel-type overrides. **Visually confirmed**: placed one, saw mullions/transoms/glazing render; changed the bay spacing on the TYPE and watched the instance re-grid. |
 | B5 | Ceiling | P2 | ✅ | **D-022.** Schema v8 `CeilingTypeDef`/`Ceiling` (`boundary: Vec2[]`, `top: TopConstraint` — reuses the wall/column/stair union, not a bespoke field). Geometry (`resolveCeiling`/`validateCeiling`) and rendering follow Slab's OWN pattern (polygon + `ExtrudeGeometry`), not Box3D — a ceiling is a boundary element like Slab/Room, and Box3D is for linear elements; logged as a deliberate deviation from the literal task wording. Anchored at its finished BOTTOM face, extruding UP by thickness — the mirror of how a Slab extrudes down from its top. `ceiling` tool (`Q`), loop-drawn exactly like slab/room. `+`14 geometry/mutation tests. **Visually confirmed**: drawn, selected, rendered as a plate in 3D, Properties panel shows type/thickness/bottom-face fields. |
 | B6 | Column grid (axes) | P1 | ✅ | Schema v4 adds `ColumnGrid`/`GridAxis` (per-axis spacing, so non-uniform bays and radial-ready data model) + `columnGrids[]`, with a tested v3→v4 migration. `shared/geometry/columnGrid.ts` resolves axis positions, grid lines (with extension + bubble points at both ends), and intersections (for future column snapping). `viewport/ColumnGrids.tsx` renders dashed lines + numbered/lettered bubbles. One-click `columngrid` tool (`Y`) drops a sane default (4 numbered × 3 lettered axes, 5m bays); axis count/spacing/labels are edited in Properties (add/remove/rename), the same numeric-first pattern as the rest of the app. `+19` geometry tests, `+2` gesture tests. **Visually confirmed in the browser** — see the note below. |
 | B7 | Primitive solids + booleans | P1 | ✅ | Schema v6 adds `PrimitiveTypeDef`/`Primitive` (box, cylinder, cone, sphere, prism, wedge, torus) and `BooleanNode` (`union`/`cut`/`intersect` over operand ids, which may be other nodes — a real tree), with a tested v5→v6 migration that back-fills the default primitive types so pre-v6 projects can use the tool. `shared/geometry/primitives.ts` tessellates each shape to a watertight indexed mesh in pure TS (no Three) plus closed-form volume/bounds; `shared/geometry/booleanTree.ts` resolves/validates the tree (cycles, dangling operands, arity) with no CSG. `frontend/src/geometry/evaluateBoolean.ts` is the single Three seam, lazy-loading `three-bvh-csg@0.0.17` and shared by the viewport AND the exporter. `primitive` tool (`V`), Union/Cut/Intersect + Explode in the Modify panel (verbs, not a tool — they act on an existing selection). `+68` primitive tests, `+38` boolean tests, `+9` gesture tests, `+8` migration tests. See D-019. |
@@ -98,8 +123,8 @@ rendering at the correct size in the live 3D/plan viewport.
 | C4 | Spot elevation / coordinate / slope | P2 | ✅ | **D-024.** Three new `AnnotationKind`s (`spot-elevation`/`spot-coordinate`/`spot-slope`) placed by one new `spot` tool (`Z`) with a ribbon mode toggle. Elevation samples the work plane's world Y at the click (so hovering a face to Dynamic-UCS-re-plane onto it, then clicking, is the whole interaction); coordinate is just the annotation's own position; slope point-in-polygon-tests the click against every roof footprint and reads that roof's uniform angle (D-018) as `tan(angle)*100`, refusing outside every roof. All three are sampled at placement, not a live host reference — logged as a deliberate scope choice. `resolveAnnotation` computes the display text from the stored numbers on every render. `+`4 format tests. **Visually confirmed**: placed a spot elevation, saw the "+0.000" label render in the viewport and the computed value in Properties; coordinate/slope modes verified via unit tests + the shared render/dispatch code path (the ribbon's mode toggle was off-screen at the test browser's narrow width). |
 | C5 | Section and elevation views | P2 | ⬜ | A `SectionPlane` object driving both the 3D clip and a derived 2D view. |
 | C6 | Derived 2D linework | P2 | ⬜ | Cut vs projection line weights. What makes a plan read as a drawing. |
-| C7 | View range / plan regions | P2 | ⬜ | |
-| C8 | Underlay (level below, halftone) | P2 | ⬜ | |
+| C7 | View range / plan regions | P2 | ✅ | **D-029.** `views[]` finally goes LIVE — it had been dead schema since C1, with `viewId: 'default'` hardcoded in five places. `addLevel` now creates the level's plan view, the migration back-fills one per level, and the active view is DERIVED from the active level rather than being second state to sync. `SavedView.cutPlaneHeight` is REPLACED by a level-relative `ViewRange` (cut/top/bottom/depth), losslessly. Plan regions cannot be done by clipping the base render to a region's complement (three.js planes intersect half-spaces; an arbitrary polygon's complement is not expressible and a second pass z-fights), so elements are PARTITIONED by plan anchor and each partition gets its own `ClippedGroup`. **Scoped rule, deliberate and drawn on screen:** an element belongs wholly to one region by its anchor point; nothing is split at a boundary. `planAnchor` answers for every element kind, proven by a test over `ELEMENT_COLLECTIONS`. **Visually confirmed**: three partitions in one plan resolved to three different clip bands — 1.2/0 outside, 0.5/0 inside the region, 4.0/2.8 for the underlay. |
+| C8 | Underlay (level below, halftone) | P2 | ✅ | **D-030.** `SavedView.underlayLevelId` draws one other level in plan as flat halftone, non-interactive, clipped by **its own** plan view's range — seeing the floor below at *its* door height is the point. Not a plan region and it does not reuse that path; it shares only `clipBandFor`. Distinct from `ghostBelowEnabled` (every level below · 3D and plan · session-only · each element's own material dimmed) on all four axes. Prompted a real cleanup: a second reason an element can be non-interactive meant five renderers each carrying a hand-copied handler block, now one shared `pickProps` alongside `surfaceProps`. **Visually confirmed**: the underlaid level rendered halftone and resolved to clip planes 4.0/2.8 while the active level used 1.2/0. |
 | C9 | Sheets / title blocks / print + PDF | P3 | ⏭️ | Document *output*; the model must be right first. |
 
 ## D. Interaction & precision
@@ -110,7 +135,7 @@ rendering at the correct size in the live 3D/plan viewport.
 | D2 | Boolean geometry decision | P1 | ✅ | **D-019.** The boolean TREE is stored parametrically and the evaluated mesh never is; primitives tessellate in pure TS; evaluation uses `three-bvh-csg` pinned at **0.0.17** (0.0.18 needs `three >= 0.179`, this repo is on 0.167), lazy-loaded via dynamic `import()` so a scene with no boolean pays nothing (E2). Verified before writing code: cube booleans give volume 7.000000 / 1.000000 / 8.000000 exactly, CPU-only, so boolean correctness is unit-testable. Box decomposition (D-005) is unchanged for rectangular openings — the two coexist deliberately. Exact BRep booleans stay deferred to the Phase 6 OpenCascade path. |
 | D3 | Trim / extend / split / offset / align | P1 | ✅ | `shared/geometry/modify.ts` (line math) + `editor/modifyVerbs.ts` (scene verbs) + four ribbon tools (`T` `E` `K` `O`) and align buttons in the Modify panel. Trim uses **"click the side you keep"**; trim/extend are two-pick (boundary, then target). **Split** hands each opening to the piece containing it and rebases its offset, and refuses when an opening straddles the cut. **Extend** from the start slides openings so they stay put in space. Offset takes its sign from which side you click, and offsets arcs by changing radius (bulge unchanged). Trim/extend refuse on arcs rather than picking one of two intersections arbitrarily — stated, not hidden. |
 | D4 | Copy / array (linear + radial) / mirror / rotate | P1 | ✅ | `shared/geometry/transform.ts` (one affine type) + `editor/transforms.ts` (verbs) + `ui/ModifyPanel.tsx` (numeric-first UI that works on a multi-selection). A mirrored arc's bulge **negates** (it encodes a signed sweep); a rotated column's own `rotation` scalar follows. Copying a wall brings its openings AND their fillings — the mirror of `deleteElement`'s cascade. A full 360° ring divides by the item count so the last copy does not land on the original. |
-| D5 | Groups | P2 | ⬜ | |
+| D5 | Groups | P2 | ✅ | **D-028.** A top-level `groups[]` referencing ids — not a `groupId` field on all fifteen element interfaces — so nesting comes free and the cycle checks are the shape `booleanTree.ts` already uses. A group has NO geometry and NO renderer: selecting one highlights every member because `SceneContent` hands the renderers the expanded leaf set, so D5 touched not one element renderer. `editor/groups.ts` holds the one resolution rule shared by picking, drag-move, box-select and the tree. Double-click enters, Escape leaves (after clearing the selection, so one Escape never does two things). `Ctrl+G`/`Ctrl+Shift+G` — a chord, since A–Z were spent (D-025). Move/transform recurse to members; duplicate deep-copies into a NEW group; delete takes the contents (a group is a unit) while Ungroup removes only the boundary. Groups may span levels by design. **Visually confirmed**: grouped two walls, both highlighted, a viewport click on one selected the whole group. |
 | D6 | Constraints / locked dimensions | P2 | ⬜ | Large subsystem — to be scoped deliberately, not half-built. |
 | D7 | Repeat-last-operation | P2 | ✅ | **D-025.** The store tracks `lastPlacementTool` — the last TYPED-placement tool (one with its own `activeXTypeId`) a commit succeeded on. `Space`, at rest, calls `repeatLastOperation` which switches back to it; every type/parameter is already a persistent field tool-switching doesn't reset, so that alone restores "same tool + type + parameters." `+`4 store tests. **Unverified live**: the test browser's key-dispatch backend sends an empty `key`/`code` for the space bar specifically (confirmed via a temporary `keydown` listener — every other key used this session, including letters, Enter, and Escape, worked correctly), so the shortcut could not be exercised end-to-end in this session; the store action itself is unit-tested and the wiring in `App.tsx` follows the same pattern as every other working shortcut in that file. |
 | D8 | Angle/polar snap increments in the UI | P2 | ⬜ | `applyAngleSnap` exists and is tested; nothing exposes the increment. |
@@ -136,6 +161,51 @@ rendering at the correct size in the live 3D/plan viewport.
 ## Change log
 
 Newest first. One line per landed item.
+
+- **A9 / B4 / D5 / C7 / C8** — the five remaining hard P2 items, in one pass, under one schema bump
+  to **v9** (`curtainWalls[]`, `wallJoins[]`, `groups[]`, `planRegions[]`, and `SavedView`'s
+  `cutPlaneHeight` → `viewRange` + `underlayLevelId`). Python mirror and golden fixtures
+  (`scene-v9-*.json`) moved in the same pass, not as a follow-up. `+62` frontend tests (1020 total),
+  `+14` backend tests (114 total). Decisions **D-026 … D-030**.
+  **Two deliberate scoped refusals**, both in the D-018 tradition: A9 joins at the ASSEMBLY level and
+  will not wrap individual layers (D-009 already declined the wall "core" concept that would need),
+  and C7 assigns each element wholly to one plan region by its anchor point rather than splitting it
+  at a boundary (splitting is a CSG problem D-005/D-019 keep out of the wall path). Neither is
+  hidden: A9 surfaces its refusals through `validateWallJoin`, and C7 draws every region boundary
+  dashed in plan so the assignment rule is visible.
+  **C7 woke `views[]` up** — dead schema since C1, with `viewId: 'default'` hardcoded in five places.
+  Views are now created with their level and the active view is derived, so a camera toggle never
+  has to commit a scene mutation.
+  **Also closed a pre-existing hole:** `export/buildSceneGroup.ts` had NO test at all, which is how
+  "the viewport drew a roof that no exported file contained" shipped and survived until B7 spotted
+  it by hand. `tests/buildSceneGroup.test.ts` now asserts every populated element collection emits a
+  mesh, and checks a mitred corner's exported vertices against the same `boxCorners` box-select
+  reads — so a future kind wired into a renderer but not the exporter fails a test instead.
+  **Two cleanups the work forced, both worth having:** `pickProps`/`surfaceProps` are now shared by
+  every element renderer (C8 added a second reason an element can be non-interactive, and five
+  renderers each carried a hand-copied handler block — five chances to forget one); and
+  `tests/locale.test.ts` now derives its coverage from `Record<ElementKind, true>` and
+  `Record<Tool, true>` instead of hand-kept arrays, so a new kind or tool without a string fails
+  `tsc` rather than silently narrowing the check. It also covers `editor.tools.*` for the first time.
+  **Visually confirmed** (real `computer` clicks, not synthetic events): the mitred corner resolves to
+  ONE shared line — both walls' end faces land on the same two points, outer (9.10, 2.15) and inner
+  (8.90, 2.35), so no overlap ridge and no notch; a curtain wall renders as mullions/transoms/glazing
+  and re-grids every instance when the TYPE's bay spacing changes; grouping two walls highlights both
+  and a viewport click on one selects the group; and one plan view resolved to THREE different clip
+  bands at once — 1.2/0 outside the region, 0.5/0 inside it, 4.0/2.8 for the underlaid level.
+  **Two real bugs the live check caught**, neither visible to the test suite: with the cut view
+  switched OFF, elements inside a plan region were still being clipped (a region redefines the cut,
+  so with no cut there is nothing to redefine); and a tool with no letter rendered its tooltip as
+  `Curtain wall ()`.
+  **Re-measured E1 after the change** (the extra render passes made this non-optional): stress scene,
+  480 frames each — **3D ~60.06 fps avg, p95 17.2 ms, min 52.6** (matching E1's original ~60.0/~58),
+  and **plan ~60.07 fps avg, p95 19.2 ms** — which also closes one of E1's own noted gaps, since the
+  plan-view camera had never been measured.
+  **Pre-existing gap surfaced, not introduced:** a wall cut mid-height renders as nothing in plan,
+  because clipping leaves an open top whose remaining interior faces are back-facing. That is exactly
+  what C6 (poché / derived 2D linework) exists to fix; it is unrelated to the view range, and was
+  confirmed by moving the bottom plane far below the wall and seeing no change. It does mean the
+  cut-height control is easiest to appreciate today on elements whose material sits below the cut.
 
 - **A10 / B5 / B8 / C4 / D7** — five P2 items landed in one pass. Schema bumped to v8
   (`ceilings[]`, `Slab.openings`, `Annotation.elevation`/`slope` — D-022/D-023/D-024), with the

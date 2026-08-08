@@ -56,6 +56,7 @@ import {
   type PointerResolution,
 } from '../editor/pointer'
 import type { Vec2 } from '../../../shared/types/scene'
+import { resolveSelection, resolveSelectionMany, rootGroupOf } from '../editor/groups'
 
 export default function Interaction() {
   const { camera, gl } = useThree()
@@ -146,8 +147,11 @@ export default function Interaction() {
 
       // Select: drag an element to move it, or drag empty space to rubber-band.
       if (s.tool === 'select') {
-        const id = s.hoveredId
-        if (id) {
+        const hovered = s.hoveredId
+        if (hovered) {
+          // D5: dragging a member of a group drags the GROUP, so the assembly keeps its shape.
+          // One resolution rule, shared with clicking and box-select, lives in `editor/groups.ts`.
+          const id = resolveSelection(s.scene, hovered, s.enteredGroupId)
           s.select(id, e.shiftKey)
           dragging.current = { id, last: r.point }
           s.beginTransient()
@@ -405,12 +409,14 @@ export default function Interaction() {
         // Below the drag threshold this was a click on empty space; r3f's onPointerMissed already
         // cleared the selection, so there is nothing to do.
         if (!box) return
-        const ids = selectInBox(
+        const hits = selectInBox(
           silhouettes(s.scene, s.activeLevelId),
           normalizeBox(box.start, box.current),
           box.mode,
           projector(camera, el.getBoundingClientRect()),
         )
+        // D5: catching one member of a group catches the group — the same rule a click follows.
+        const ids = resolveSelectionMany(s.scene, hits, s.enteredGroupId)
         s.selectMany(ids, pending.additive)
         s.flash(
           ids.length === 0
@@ -426,11 +432,31 @@ export default function Interaction() {
       release()
     }
 
+    /**
+     * D5: double-clicking a grouped element ENTERS its group, so the next click selects a member
+     * rather than the whole thing. The universal gesture for this in every tool that has groups.
+     * Double-clicking outside any group steps back out.
+     */
+    const onDoubleClick = () => {
+      const s = useEditor.getState()
+      if (s.tool !== 'select') return
+      const hovered = s.hoveredId
+      const group = hovered ? rootGroupOf(s.scene, hovered, s.enteredGroupId) : null
+      if (group) {
+        s.enterGroup(group.id)
+        s.flash('Editing inside this group — Escape to finish')
+      } else if (s.enteredGroupId) {
+        s.enterGroup(null)
+      }
+    }
+
     el.addEventListener('pointerdown', onDown)
     el.addEventListener('pointerup', onUp)
+    el.addEventListener('dblclick', onDoubleClick)
     return () => {
       el.removeEventListener('pointerdown', onDown)
       el.removeEventListener('pointerup', onUp)
+      el.removeEventListener('dblclick', onDoubleClick)
     }
   }, [camera, gl.domElement, resolve])
 

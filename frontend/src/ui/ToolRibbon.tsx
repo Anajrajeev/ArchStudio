@@ -39,6 +39,8 @@ import {
   IconSlabSolid,
   IconSlabOpening,
   IconSpot,
+  IconCurtainWall,
+  IconPlanRegion,
   IconSpotElevation,
   IconSpotCoordinate,
   IconSpotSlope,
@@ -62,6 +64,9 @@ const GROUPS: ToolDef[][] = [
     { tool: 'stair', icon: <IconStair />, shortcut: 'H', category: 'stair' },
     { tool: 'railing', icon: <IconRailing />, shortcut: 'J', category: 'railing' },
     { tool: 'ceiling', icon: <IconCeiling />, shortcut: 'Q', category: 'ceiling' },
+    // No letter: A–Z were fully spoken for before this pass (D-025), and nothing requires a tool
+    // to have one. The ribbon button is the whole affordance.
+    { tool: 'curtainwall', icon: <IconCurtainWall />, shortcut: '', category: 'curtainWall' },
   ],
   [
     { tool: 'door', icon: <IconDoor />, shortcut: 'D', category: 'door' },
@@ -89,6 +94,8 @@ const GROUPS: ToolDef[][] = [
     { tool: 'leader', icon: <IconLeader />, shortcut: 'L' },
     { tool: 'spot', icon: <IconSpot />, shortcut: 'Z' },
   ],
+  // View tools (C7): they author how the PLAN is drawn rather than what the model contains.
+  [{ tool: 'planregion', icon: <IconPlanRegion />, shortcut: '' }],
 ]
 
 const OFFSET_PRESETS = [0.1, 0.2, 0.5, 1, 1.2, 2, 3]
@@ -129,7 +136,12 @@ export default function ToolRibbon() {
             <button
               key={d.tool}
               className={`icon-btn tip ${tool === d.tool ? 'icon-btn--active' : ''}`}
-              data-tip={`${t(`editor.tools.${d.tool}`)} (${d.shortcut})`}
+              // A tool without a letter shows its name alone — an empty "()" reads as a bug.
+              data-tip={
+                d.shortcut
+                  ? `${t(`editor.tools.${d.tool}`)} (${d.shortcut})`
+                  : t(`editor.tools.${d.tool}`)
+              }
               onClick={() => setTool(d.tool)}
               aria-label={t(`editor.tools.${d.tool}`)}
               aria-pressed={tool === d.tool}
@@ -373,6 +385,8 @@ function TypeSelector({ category }: { category: TypeCategory }) {
         return s.activeRailingTypeId
       case 'ceiling':
         return s.activeCeilingTypeId
+      case 'curtainWall':
+        return s.activeCurtainWallTypeId
       default:
         return ''
     }

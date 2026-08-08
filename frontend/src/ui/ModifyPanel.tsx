@@ -35,8 +35,10 @@ import {
 } from '../editor/booleanVerbs'
 import { validateOperands } from '../../../shared/geometry/booleanTree'
 import { splitRoofAndWalls, voidWallsToRoof } from '../editor/roofVoid'
+import { joinWalls, selectionForJoin, unjoinWalls } from '../editor/joinVerbs'
+import { canGroup, groupElements, ungroupElements } from '../editor/groupVerbs'
 import { selectionCentroid } from '../editor/selection'
-import type { SceneGraph, Vec2 } from '../../../shared/types/scene'
+import type { SceneGraph, Vec2, WallJoinStyle } from '../../../shared/types/scene'
 
 type MirrorAxis = 'x' | 'y'
 
@@ -55,6 +57,7 @@ export default function ModifyPanel() {
   const [ringAngle, setRingAngle] = useState(360)
   const [keepOriginal, setKeepOriginal] = useState(true)
   const [mirrorAxis, setMirrorAxis] = useState<MirrorAxis>('x')
+  const [joinStyle, setJoinStyle] = useState<WallJoinStyle>('miter')
 
   const centroid = selectionCentroid(scene, selectedIds)
   const centroidX = centroid?.[0] ?? 0
@@ -99,6 +102,13 @@ export default function ModifyPanel() {
   // buttons appear exactly when the verb would succeed — no second, drifting copy of the rule.
   const booleanReady = validateOperands(scene, selectedIds) === null
   const roofVoidReady = !('error' in splitRoofAndWalls(scene, selectedIds))
+  // Same discipline for joins: `selectionForJoin` is the one rule, so the button appears exactly
+  // when the verb would get past its own selection check.
+  const joinReady = !('error' in selectionForJoin(scene, selectedIds))
+  const unjoinReady = scene.wallJoins.some(
+    (j) => selectedIds.includes(j.id) || j.memberIds.some((m) => selectedIds.includes(m)),
+  )
+  const ungroupReady = selectedIds.some((id) => scene.groups.some((g) => g.id === id))
   const explodableId =
     selectedIds.length === 1 && scene.booleans.some((b) => b.id === selectedIds[0])
       ? selectedIds[0]
@@ -247,6 +257,77 @@ export default function ModifyPanel() {
             onClick={() => run(() => voidWallsToRoof(scene, selectedIds))}
           >
             {t('modify.voidToRoof')}
+          </button>
+        </Actions>
+      )}
+
+      {/* Groups (D5). Group needs two or more elements; Ungroup appears only when something in
+          the selection actually IS a group, so neither button is ever offered as a no-op. */}
+      {(canGroup(selectedIds) || ungroupReady) && (
+        <>
+          <Group label={t('modify.group')}>
+            <span className="prop-label" style={{ gridColumn: '1 / -1', opacity: 0.7 }}>
+              {t('modify.groupHint')}
+            </span>
+          </Group>
+          <Actions>
+            {canGroup(selectedIds) && (
+              <button className="btn" onClick={() => run(() => groupElements(scene, selectedIds))}>
+                {t('modify.groupElements')}
+              </button>
+            )}
+            {ungroupReady && (
+              <button className="btn" onClick={() => run(() => ungroupElements(scene, selectedIds))}>
+                {t('modify.ungroupElements')}
+              </button>
+            )}
+          </Actions>
+        </>
+      )}
+
+      {/* Wall joins (A9). Shown only when the selection is two or more walls on one level, so the
+          button is never offered for a selection that is guaranteed to refuse. Style is picked
+          here rather than after the fact because it is the ONE thing the geometry cannot infer:
+          an equal-thickness corner can legitimately be either mitred or butted. Unjoin appears
+          whenever anything selected is currently joined — including the join object itself, which
+          is selectable from the model tree. */}
+      {joinReady && (
+        <>
+          <Group label={t('modify.join')}>
+            <label className="prop-label" htmlFor="join-style">
+              {t('modify.joinStyle')}
+            </label>
+            <select
+              id="join-style"
+              className="select"
+              value={joinStyle}
+              onChange={(e) => setJoinStyle(e.target.value as WallJoinStyle)}
+            >
+              <option value="miter">{t('modify.joinMiter')}</option>
+              <option value="butt">{t('modify.joinButt')}</option>
+            </select>
+            <span className="prop-label" style={{ gridColumn: '1 / -1', opacity: 0.7 }}>
+              {t('modify.joinHint')}
+            </span>
+          </Group>
+          <Actions>
+            <button
+              className="btn"
+              onClick={() => run(() => joinWalls(scene, selectedIds, joinStyle))}
+            >
+              {t('modify.joinWalls')}
+            </button>
+          </Actions>
+        </>
+      )}
+      {unjoinReady && (
+        <Actions>
+          <button
+            className="btn"
+            style={{ width: '100%' }}
+            onClick={() => run(() => unjoinWalls(scene, selectedIds))}
+          >
+            {t('modify.unjoinWalls')}
           </button>
         </Actions>
       )}

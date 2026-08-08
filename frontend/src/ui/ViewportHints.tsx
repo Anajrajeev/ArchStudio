@@ -31,7 +31,8 @@ export default function ViewportHints() {
     scene.stairs.length === 0 &&
     scene.railings.length === 0 &&
     scene.columnGrids.length === 0 &&
-    scene.ceilings.length === 0
+    scene.ceilings.length === 0 &&
+    scene.curtainWalls.length === 0
 
   if (!isEmpty || tool !== 'select') return null
 

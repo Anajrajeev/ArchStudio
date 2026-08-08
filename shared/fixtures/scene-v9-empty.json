@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 8,
+  "schemaVersion": 9,
   "projectId": "fixture-project",
   "units": "m",
   "types": [
@@ -241,6 +241,24 @@
           "function": "finish"
         }
       ]
+    },
+    {
+      "id": "cwt-glazed-1500",
+      "category": "curtainWall",
+      "name": "Glazed curtain wall — 1.5m bays",
+      "gridU": {
+        "kind": "maximumSpacing",
+        "spacing": 1.5
+      },
+      "gridV": {
+        "kind": "maximumSpacing",
+        "spacing": 1.5
+      },
+      "mullionWidth": 0.05,
+      "mullionDepth": 0.15,
+      "panelThickness": 0.024,
+      "panelMaterial": "mat-glass",
+      "mullionMaterial": "mat-steel"
     }
   ],
   "levels": [],
@@ -303,6 +321,7 @@
     }
   ],
   "views": [],
+  "planRegions": [],
   "dimensions": [],
   "annotations": [],
   "roomTags": [],
@@ -312,5 +331,8 @@
   "booleans": [],
   "stairs": [],
   "railings": [],
-  "ceilings": []
+  "ceilings": [],
+  "curtainWalls": [],
+  "wallJoins": [],
+  "groups": []
 }

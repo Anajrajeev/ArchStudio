@@ -1,8 +1,8 @@
-"""Tests for the shared scene-graph Pydantic models (`shared/python/models.py`), schema v8.
+"""Tests for the shared scene-graph Pydantic models (`shared/python/models.py`), schema v9.
 
 Two jobs:
 
-1. Prove the models encode v6 correctly — every discriminated union discriminates, every
+1. Prove the models encode the schema correctly — every discriminated union discriminates, every
    constraint the TS doc comments state is enforced, and the camelCase wire format round-trips.
 2. **Prove they have not drifted from `shared/types/scene.ts`.** That is what the fixture tests
    at the bottom do, against the golden documents in `shared/fixtures/` that the TypeScript
@@ -31,7 +31,10 @@ from shared.python.models import (
     CeilingTypeDef,
     CircularProfile,
     ColumnTypeDef,
+    CurtainWall,
+    CurtainWallTypeDef,
     DoorTypeDef,
+    ElementGroup,
     FurnitureTypeDef,
     Level,
     MaterialLayer,
@@ -53,7 +56,9 @@ from shared.python.models import (
     TopLevelConstraint,
     TopRoofConstraint,
     TopUnconnected,
+    ViewRange,
     Wall,
+    WallJoin,
     WallTypeDef,
     WindowTypeDef,
     assembly_thickness,
@@ -783,6 +788,129 @@ class TestSpotAnnotations:
         assert a.slope is None
 
 
+class TestCurtainWall:
+    """B4/D-027. A grid-driven glazing system; panels are sized BY the grid, never directly."""
+
+    @pytest.mark.parametrize(
+        "rule",
+        [
+            {"kind": "fixedNumber", "count": 4},
+            {"kind": "fixedDistance", "spacing": 1.2},
+            {"kind": "maximumSpacing", "spacing": 1.5},
+        ],
+    )
+    def test_every_grid_rule_variant_discriminates(self, rule: dict[str, Any]) -> None:
+        t = CurtainWallTypeDef.model_validate(
+            {
+                "id": "cwt-1",
+                "category": "curtainWall",
+                "name": "Glazed",
+                "gridU": rule,
+                "gridV": rule,
+                "mullionWidth": 0.05,
+                "mullionDepth": 0.15,
+                "panelThickness": 0.024,
+                "panelMaterial": "mat-glass",
+                "mullionMaterial": "mat-steel",
+            }
+        )
+        assert t.grid_u.kind == rule["kind"]
+
+    def test_rejects_a_zero_bay_count(self) -> None:
+        with pytest.raises(ValidationError):
+            CurtainWallTypeDef.model_validate(
+                {
+                    "id": "cwt-1",
+                    "category": "curtainWall",
+                    "name": "Glazed",
+                    "gridU": {"kind": "fixedNumber", "count": 0},
+                    "gridV": {"kind": "fixedNumber", "count": 2},
+                    "mullionWidth": 0.05,
+                    "mullionDepth": 0.15,
+                    "panelThickness": 0.024,
+                    "panelMaterial": "mat-glass",
+                    "mullionMaterial": "mat-steel",
+                }
+            )
+
+    def test_instance_reuses_baseline_and_top_constraint(self) -> None:
+        cw = CurtainWall.model_validate(
+            {
+                "id": "cw1",
+                "typeId": "cwt-1",
+                "levelId": "lv1",
+                "baseline": {"kind": "line", "start": [0, 0], "end": [6, 0]},
+                "baseOffset": 0,
+                "top": {"kind": "level", "levelId": "lv2", "offset": 0},
+            }
+        )
+        assert isinstance(cw.baseline, BaselineLine)
+        assert isinstance(cw.top, TopLevelConstraint)
+
+
+class TestWallJoin:
+    """A9/D-026. A stored relationship; every trim angle is derived, never stored."""
+
+    def test_parses_a_two_member_miter(self) -> None:
+        j = WallJoin.model_validate(
+            {
+                "id": "wj1",
+                "levelId": "lv1",
+                "memberIds": ["w1", "w2"],
+                "point": [6, 0],
+                "style": "miter",
+                "throughId": None,
+            }
+        )
+        assert j.style == "miter"
+        assert j.through_id is None
+
+    def test_rejects_a_single_member(self) -> None:
+        # A "join" of one wall is meaningless — there is nothing to clean up against.
+        with pytest.raises(ValidationError):
+            WallJoin.model_validate(
+                {
+                    "id": "wj1",
+                    "levelId": "lv1",
+                    "memberIds": ["w1"],
+                    "point": [0, 0],
+                    "style": "butt",
+                }
+            )
+
+
+class TestElementGroup:
+    """D5/D-028. Member ids may name other groups, which is what makes this a tree."""
+
+    def test_nests(self) -> None:
+        inner = ElementGroup.model_validate({"id": "g1", "name": "Inner", "memberIds": ["w1"]})
+        outer = ElementGroup.model_validate(
+            {"id": "g2", "name": "Outer", "memberIds": ["g1", "c1"]}
+        )
+        assert inner.id in outer.member_ids
+
+
+class TestViewRange:
+    """C7/D-029. Offsets above the view's OWN level, never absolute world Y."""
+
+    def test_round_trips_through_the_wire_format(self) -> None:
+        vr = ViewRange.model_validate(
+            {"cutHeight": 1.2, "topOffset": 3, "bottomOffset": 0, "viewDepth": 0.5}
+        )
+        assert vr.model_dump(by_alias=True) == {
+            "cutHeight": 1.2,
+            "topOffset": 3.0,
+            "bottomOffset": 0.0,
+            "viewDepth": 0.5,
+        }
+
+    def test_rejects_a_negative_view_depth(self) -> None:
+        with pytest.raises(ValidationError):
+            ViewRange.model_validate(
+                {"cutHeight": 1.2, "topOffset": 3, "bottomOffset": 0, "viewDepth": -1}
+            )
+
+
 class TestSceneDiff:
     def test_defaults_to_all_none(self) -> None:
         diff = SceneDiff()
@@ -816,12 +944,12 @@ class TestFixtureParity:
     fails these tests — which is the whole point.
     """
 
-    @pytest.mark.parametrize("name", ["scene-v8-empty.json", "scene-v8-populated.json"])
+    @pytest.mark.parametrize("name", ["scene-v9-empty.json", "scene-v9-populated.json"])
     def test_fixture_parses(self, name: str) -> None:
         sg = parse_scene(load_fixture(name))
         assert sg.schema_version == SCHEMA_VERSION
 
-    @pytest.mark.parametrize("name", ["scene-v8-empty.json", "scene-v8-populated.json"])
+    @pytest.mark.parametrize("name", ["scene-v9-empty.json", "scene-v9-populated.json"])
     def test_fixture_round_trips(self, name: str) -> None:
         raw = load_fixture(name)
         sg = parse_scene(raw)
@@ -829,12 +957,12 @@ class TestFixtureParity:
         assert again == sg
 
     def test_fixture_version_matches_the_python_constant(self) -> None:
-        assert load_fixture("scene-v8-empty.json")["schemaVersion"] == SCHEMA_VERSION
+        assert load_fixture("scene-v9-empty.json")["schemaVersion"] == SCHEMA_VERSION
 
     def test_populated_fixture_exercises_every_collection(self) -> None:
         # If this fails, the fixture stopped being a full-coverage document and the parity
         # guarantee quietly narrowed.
-        sg = parse_scene(load_fixture("scene-v8-populated.json"))
+        sg = parse_scene(load_fixture("scene-v9-populated.json"))
         for name in (
             "types",
             "levels",
@@ -858,11 +986,15 @@ class TestFixtureParity:
             "stairs",
             "railings",
             "ceilings",
+            "curtain_walls",
+            "wall_joins",
+            "groups",
+            "plan_regions",
         ):
             assert getattr(sg, name), f"{name} is empty in the populated fixture"
 
     def test_populated_fixture_covers_every_type_category(self) -> None:
-        sg = parse_scene(load_fixture("scene-v8-populated.json"))
+        sg = parse_scene(load_fixture("scene-v9-populated.json"))
         assert {t.category for t in sg.types} == {
             "wall",
             "door",
@@ -876,12 +1008,13 @@ class TestFixtureParity:
             "stair",
             "railing",
             "ceiling",
+            "curtainWall",
         }
 
     def test_typed_lookups_narrow_by_category(self) -> None:
         # Run against the fixture because it is the one document with every category present,
         # so each lookup is checked for both a hit AND a wrong-category miss.
-        sg = parse_scene(load_fixture("scene-v8-populated.json"))
+        sg = parse_scene(load_fixture("scene-v9-populated.json"))
         assert sg.find_wall_type("wt-1") is not None
         assert sg.find_slab_type("st-1") is not None
         assert sg.find_roof_type("rt-1") is not None
@@ -889,6 +1022,7 @@ class TestFixtureParity:
         assert sg.find_stair_type("stt-1") is not None
         assert sg.find_railing_type("rlt-1") is not None
         assert sg.find_ceiling_type("clt-1") is not None
+        assert sg.find_curtain_wall_type("cwt-1") is not None
         # Every lookup must refuse an id that exists but is the wrong category.
         assert sg.find_slab_type("wt-1") is None
         assert sg.find_roof_type("st-1") is None
@@ -897,14 +1031,48 @@ class TestFixtureParity:
         assert sg.find_stair_type("rlt-1") is None
         assert sg.find_railing_type("stt-1") is None
         assert sg.find_ceiling_type("stt-1") is None
+        assert sg.find_curtain_wall_type("wt-1") is None
 
     def test_populated_fixture_covers_every_primitive_kind(self) -> None:
-        sg = parse_scene(load_fixture("scene-v8-populated.json"))
+        sg = parse_scene(load_fixture("scene-v9-populated.json"))
         kinds = {t.shape.kind for t in sg.types if isinstance(t, PrimitiveTypeDef)}
         assert kinds == set(PRIMITIVE_KINDS)
 
     def test_populated_fixture_covers_slab_openings_and_spot_annotations(self) -> None:
-        sg = parse_scene(load_fixture("scene-v8-populated.json"))
+        sg = parse_scene(load_fixture("scene-v9-populated.json"))
         assert any(len(s.openings) > 0 for s in sg.slabs)
         kinds = {a.kind for a in sg.annotations}
         assert {"spot-elevation", "spot-coordinate", "spot-slope"} <= kinds
+
+    def test_populated_fixture_covers_every_grid_rule_variant(self) -> None:
+        # The fixture carries two curtain-wall types purely so all three variants appear;
+        # a variant missing here is a variant the parity lock cannot catch drift in.
+        sg = parse_scene(load_fixture("scene-v9-populated.json"))
+        rules = [
+            r
+            for t in sg.types
+            if isinstance(t, CurtainWallTypeDef)
+            for r in (t.grid_u, t.grid_v)
+        ]
+        assert {r.kind for r in rules} == {"fixedNumber", "fixedDistance", "maximumSpacing"}
+
+    def test_populated_fixture_covers_both_view_range_states(self) -> None:
+        # A plan view (viewRange set, underlay set) AND a 3D view (both null) — the two states
+        # C7/C8 introduced. Without both, the optional fields are never exercised.
+        sg = parse_scene(load_fixture("scene-v9-populated.json"))
+        assert any(v.view_range is not None and v.underlay_level_id is not None for v in sg.views)
+        assert any(v.view_range is None and v.underlay_level_id is None for v in sg.views)
+
+    def test_populated_fixture_has_a_nested_group(self) -> None:
+        # Nesting is what makes `groups` a tree rather than flat tagging (D-028).
+        sg = parse_scene(load_fixture("scene-v9-populated.json"))
+        group_ids = {g.id for g in sg.groups}
+        assert any(any(m in group_ids for m in g.member_ids) for g in sg.groups)
+
+    def test_find_plan_view_narrows_to_the_level(self) -> None:
+        sg = parse_scene(load_fixture("scene-v9-populated.json"))
+        view = sg.find_plan_view("lv1")
+        assert view is not None
+        assert view.view_range is not None
+        # The 3D view (levelId null) must never be returned as a level's plan view.
+        assert sg.find_plan_view("no-such-level") is None

@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 8,
+  "schemaVersion": 9,
   "projectId": "fixture-project",
   "units": "m",
   "types": [
@@ -219,6 +219,42 @@
           "function": "finish"
         }
       ]
+    },
+    {
+      "id": "cwt-1",
+      "category": "curtainWall",
+      "name": "Glazed curtain wall",
+      "gridU": {
+        "kind": "maximumSpacing",
+        "spacing": 1.5
+      },
+      "gridV": {
+        "kind": "fixedNumber",
+        "count": 3
+      },
+      "mullionWidth": 0.05,
+      "mullionDepth": 0.15,
+      "panelThickness": 0.024,
+      "panelMaterial": "mat-glass",
+      "mullionMaterial": "mat-steel"
+    },
+    {
+      "id": "cwt-2",
+      "category": "curtainWall",
+      "name": "Storefront — 1.2m bays",
+      "gridU": {
+        "kind": "fixedDistance",
+        "spacing": 1.2
+      },
+      "gridV": {
+        "kind": "fixedDistance",
+        "spacing": 1.1
+      },
+      "mullionWidth": 0.04,
+      "mullionDepth": 0.1,
+      "panelThickness": 0.02,
+      "panelMaterial": "mat-glass",
+      "mullionMaterial": "mat-steel"
     }
   ],
   "levels": [
@@ -545,7 +581,13 @@
       ],
       "projection": "orthographic",
       "levelId": "lv1",
-      "cutPlaneHeight": 1.2,
+      "viewRange": {
+        "cutHeight": 1.2,
+        "topOffset": 3,
+        "bottomOffset": 0,
+        "viewDepth": 0.5
+      },
+      "underlayLevelId": "lv2",
       "visibleLevelIds": [
         "lv1"
       ],
@@ -576,10 +618,42 @@
       ],
       "projection": "perspective",
       "levelId": null,
-      "cutPlaneHeight": null,
+      "viewRange": null,
+      "underlayLevelId": null,
       "visibleLevelIds": null,
       "cropRegion": null,
       "workPlaneElevation": 0
+    }
+  ],
+  "planRegions": [
+    {
+      "id": "pregion1",
+      "viewId": "v1",
+      "name": "Stair void — raised cut",
+      "boundary": [
+        [
+          1,
+          1
+        ],
+        [
+          3,
+          1
+        ],
+        [
+          3,
+          3
+        ],
+        [
+          1,
+          3
+        ]
+      ],
+      "viewRange": {
+        "cutHeight": 2.4,
+        "topOffset": 3,
+        "bottomOffset": 0,
+        "viewDepth": 0
+      }
     }
   ],
   "dimensions": [
@@ -932,6 +1006,64 @@
         "kind": "unconnected",
         "height": 3
       }
+    }
+  ],
+  "curtainWalls": [
+    {
+      "id": "cw1",
+      "typeId": "cwt-1",
+      "levelId": "lv1",
+      "baseline": {
+        "kind": "line",
+        "start": [
+          0,
+          4
+        ],
+        "end": [
+          6,
+          4
+        ]
+      },
+      "baseOffset": 0,
+      "top": {
+        "kind": "level",
+        "levelId": "lv2",
+        "offset": -0.2
+      }
+    }
+  ],
+  "wallJoins": [
+    {
+      "id": "wj1",
+      "levelId": "lv1",
+      "memberIds": [
+        "w1",
+        "w2"
+      ],
+      "point": [
+        6,
+        0
+      ],
+      "style": "miter",
+      "throughId": null
+    }
+  ],
+  "groups": [
+    {
+      "id": "g1",
+      "name": "Furniture set",
+      "memberIds": [
+        "fu1",
+        "c1"
+      ]
+    },
+    {
+      "id": "g2",
+      "name": "Living room layout",
+      "memberIds": [
+        "g1",
+        "r1"
+      ]
     }
   ]
 }

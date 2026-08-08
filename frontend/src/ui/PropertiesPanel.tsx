@@ -19,6 +19,10 @@ import {
   type SceneGraph,
   type TopConstraint,
   type BooleanOp,
+  type GridRule,
+  type CurtainWallTypeDef,
+  type WallJoinStyle,
+  type ViewRange,
 } from '../../../shared/types/scene'
 import {
   resolveBooleanNode,
@@ -35,6 +39,12 @@ import {
   validateOpening,
   validateCeiling,
 } from '../../../shared/geometry/index'
+import {
+  resolveCurtainWall,
+  validateCurtainWall,
+} from '../../../shared/geometry/curtainWall'
+import { validateWallJoin } from '../../../shared/geometry/wallJoin'
+import { validatePlanRegion } from '../../../shared/geometry/viewRange'
 import { resolveAnnotation } from '../../../shared/geometry/annotations'
 import { useEditor, parseLengthInput, formatLength } from '../scene/store'
 import {
@@ -68,6 +78,10 @@ import {
   updateStair,
   updateRailing,
   updateCeiling,
+  updateCurtainWall,
+  updateWallJoin,
+  updateGroup,
+  updatePlanRegion,
   removeSlabOpening,
 } from '../scene/mutations'
 import { resolveRoof, isRoofError } from '../../../shared/geometry/roof'
@@ -164,6 +178,10 @@ export default function PropertiesPanel() {
           {single.kind === 'stair' && <StairProps id={single.id} />}
           {single.kind === 'railing' && <RailingProps id={single.id} />}
           {single.kind === 'ceiling' && <CeilingProps id={single.id} />}
+          {single.kind === 'curtainWall' && <CurtainWallProps id={single.id} />}
+          {single.kind === 'wallJoin' && <WallJoinProps id={single.id} />}
+          {single.kind === 'group' && <GroupProps id={single.id} />}
+          {single.kind === 'planRegion' && <PlanRegionProps id={single.id} />}
 
           <div style={{ padding: 'var(--sp-8)' }}>
             <button
@@ -540,6 +558,16 @@ function Validation({
   } else if (kind === 'ceiling') {
     const c = scene.ceilings.find((x) => x.id === id)
     if (c) errors = validateCeiling(scene, c)
+  } else if (kind === 'curtainWall') {
+    const c = scene.curtainWalls.find((x) => x.id === id)
+    if (c) errors = validateCurtainWall(scene, c)
+  } else if (kind === 'planRegion') {
+    const r = scene.planRegions.find((x) => x.id === id)
+    if (r) errors = validatePlanRegion(scene, r)
+  } else if (kind === 'wallJoin') {
+    const j = scene.wallJoins.find((x) => x.id === id)
+    const problem = j ? validateWallJoin(scene, j) : null
+    if (problem) errors = [problem]
   }
   if (errors.length === 0) return null
 
@@ -2072,5 +2100,282 @@ function TopConstraintField({
         />
       )}
     </>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Curtain wall (B4) / wall join (A9) / group (D5) / plan region (C7)
+// ---------------------------------------------------------------------------
+
+/** One `GridRule` editor: the rule, then whichever single number that rule takes. */
+function GridRuleField({
+  label,
+  value,
+  onCommit,
+}: {
+  label: string
+  value: GridRule
+  onCommit: (rule: GridRule) => void
+}) {
+  const { t } = useTranslation()
+  return (
+    <>
+      <SelectField
+        label={label}
+        value={value.kind}
+        options={[
+          { value: 'fixedNumber', label: t('properties.gridFixedNumber') },
+          { value: 'fixedDistance', label: t('properties.gridFixedDistance') },
+          { value: 'maximumSpacing', label: t('properties.gridMaximumSpacing') },
+        ]}
+        onCommit={(kind) => {
+          // Carry the current magnitude across so switching rule keeps roughly the same rhythm
+          // instead of snapping to an arbitrary default.
+          if (kind === 'fixedNumber') {
+            onCommit({ kind: 'fixedNumber', count: value.kind === 'fixedNumber' ? value.count : 3 })
+          } else if (kind === 'fixedDistance') {
+            onCommit({
+              kind: 'fixedDistance',
+              spacing: value.kind === 'fixedNumber' ? 1.5 : value.spacing,
+            })
+          } else {
+            onCommit({
+              kind: 'maximumSpacing',
+              spacing: value.kind === 'fixedNumber' ? 1.5 : value.spacing,
+            })
+          }
+        }}
+      />
+      {value.kind === 'fixedNumber' ? (
+        <NumberField
+          label={t('properties.gridCount')}
+          value={value.count}
+          onCommit={(v) => onCommit({ kind: 'fixedNumber', count: Math.max(1, Math.round(v)) })}
+          min={1}
+          step={1}
+        />
+      ) : (
+        <NumberField
+          label={t('properties.gridSpacing')}
+          value={value.spacing}
+          onCommit={(v) => onCommit({ ...value, spacing: Math.max(0.05, v) })}
+          unit="m"
+          step={0.1}
+          min={0.05}
+        />
+      )}
+    </>
+  )
+}
+
+function CurtainWallProps({ id }: { id: string }) {
+  const { t } = useTranslation()
+  const scene = useEditor((s) => s.scene)
+  const commit = useEditor((s) => s.commit)
+  const cw = scene.curtainWalls.find((x) => x.id === id)
+  if (!cw) return null
+  const type = findType(scene, cw.typeId)
+  if (!type || type.category !== 'curtainWall') return null
+  const resolved = resolveCurtainWall(scene, cw)
+
+  /** Every field in this group is a TYPE field: editing it re-grids every instance (D-009). */
+  const setType = (label: string, patch: Partial<CurtainWallTypeDef>) =>
+    commit(label, (s) => updateType(s, cw.typeId, patch))
+
+  return (
+    <>
+      <Group label={t('properties.typeGroup')}>
+        <TypePicker elementId={id} category="curtainWall" typeId={cw.typeId} />
+        <GridRuleField
+          label={t('properties.gridU')}
+          value={type.gridU}
+          onCommit={(gridU) => setType('Set curtain wall bays', { gridU })}
+        />
+        <GridRuleField
+          label={t('properties.gridV')}
+          value={type.gridV}
+          onCommit={(gridV) => setType('Set curtain wall rows', { gridV })}
+        />
+        <NumberField
+          label={t('properties.mullionWidth')}
+          value={type.mullionWidth}
+          onCommit={(v) => setType('Set mullion width', { mullionWidth: Math.max(0.005, v) })}
+          unit="m"
+          step={0.005}
+          min={0.005}
+        />
+        <NumberField
+          label={t('properties.mullionDepth')}
+          value={type.mullionDepth}
+          onCommit={(v) => setType('Set mullion depth', { mullionDepth: Math.max(0.005, v) })}
+          unit="m"
+          step={0.005}
+          min={0.005}
+        />
+        <NumberField
+          label={t('properties.panelThickness')}
+          value={type.panelThickness}
+          onCommit={(v) => setType('Set panel thickness', { panelThickness: Math.max(0.001, v) })}
+          unit="m"
+          step={0.002}
+          min={0.001}
+        />
+        <MaterialField
+          label={t('properties.mullionMaterial')}
+          value={type.mullionMaterial}
+          onCommit={(v) => setType('Set mullion material', { mullionMaterial: v })}
+        />
+        <MaterialField
+          label={t('properties.panelMaterial')}
+          value={type.panelMaterial}
+          onCommit={(v) => setType('Set panel material', { panelMaterial: v })}
+        />
+      </Group>
+      <Group label={t('properties.instanceGroup')}>
+        <TopConstraintField
+          value={cw.top}
+          levelId={cw.levelId}
+          onCommit={(top) => commit('Set curtain wall top', (s) => updateCurtainWall(s, id, { top }))}
+        />
+        <NumberField
+          label={t('properties.baseOffset')}
+          value={cw.baseOffset}
+          onCommit={(v) =>
+            commit('Set base offset', (s) => updateCurtainWall(s, id, { baseOffset: v }))
+          }
+          unit="m"
+          step={0.05}
+        />
+        <ReadOnly
+          label={t('properties.length')}
+          value={resolved ? formatLength(resolved.length, scene.units) : '—'}
+        />
+        <ReadOnly
+          label={t('properties.height')}
+          value={resolved ? formatLength(resolved.height, scene.units) : '—'}
+        />
+      </Group>
+      <div
+        style={{
+          padding: '0 var(--sp-8) var(--sp-8)',
+          fontSize: 'var(--fs-label)',
+          color: 'var(--text-dim)',
+        }}
+      >
+        {t('properties.panelsHint')}
+      </div>
+    </>
+  )
+}
+
+function WallJoinProps({ id }: { id: string }) {
+  const { t } = useTranslation()
+  const scene = useEditor((s) => s.scene)
+  const commit = useEditor((s) => s.commit)
+  const selectMany = useEditor((s) => s.selectMany)
+  const join = scene.wallJoins.find((x) => x.id === id)
+  if (!join) return null
+
+  return (
+    <Group label={t('properties.instanceGroup')}>
+      <SelectField
+        label={t('properties.joinStyle')}
+        value={join.style}
+        options={[
+          { value: 'miter', label: t('properties.joinMiter') },
+          { value: 'butt', label: t('properties.joinButt') },
+        ]}
+        onCommit={(v) =>
+          commit('Set join style', (s) => updateWallJoin(s, id, { style: v as WallJoinStyle }))
+        }
+      />
+      <SelectField
+        label={t('properties.joinThrough')}
+        value={join.throughId ?? ''}
+        options={[
+          { value: '', label: t('properties.joinThroughAuto') },
+          ...join.memberIds.map((m) => ({ value: m, label: elementLabel(scene, m) })),
+        ]}
+        onCommit={(v) =>
+          commit('Set through wall', (s) => updateWallJoin(s, id, { throughId: v || null }))
+        }
+      />
+      <span className="prop-label">{t('properties.joinMembers')}</span>
+      <button className="btn" onClick={() => selectMany(join.memberIds)}>
+        {join.memberIds.length}
+      </button>
+    </Group>
+  )
+}
+
+function GroupProps({ id }: { id: string }) {
+  const { t } = useTranslation()
+  const scene = useEditor((s) => s.scene)
+  const commit = useEditor((s) => s.commit)
+  const enteredGroupId = useEditor((s) => s.enteredGroupId)
+  const enterGroup = useEditor((s) => s.enterGroup)
+  const group = scene.groups.find((x) => x.id === id)
+  if (!group) return null
+  const inside = enteredGroupId === id
+
+  return (
+    <Group label={t('properties.instanceGroup')}>
+      <TextField
+        label={t('properties.groupName')}
+        value={group.name}
+        onCommit={(v) => commit('Rename group', (s) => updateGroup(s, id, { name: v }))}
+      />
+      <ReadOnly label={t('properties.groupMembers')} value={String(group.memberIds.length)} />
+      <span className="prop-label" />
+      <button className="btn" onClick={() => enterGroup(inside ? null : id)}>
+        {inside ? t('properties.groupExit') : t('properties.groupEnter')}
+      </button>
+    </Group>
+  )
+}
+
+function PlanRegionProps({ id }: { id: string }) {
+  const { t } = useTranslation()
+  const scene = useEditor((s) => s.scene)
+  const commit = useEditor((s) => s.commit)
+  const region = scene.planRegions.find((x) => x.id === id)
+  if (!region) return null
+
+  const setRange = (patch: Partial<ViewRange>) =>
+    commit('Set region view range', (s) =>
+      updatePlanRegion(s, id, { viewRange: { ...region.viewRange, ...patch } }),
+    )
+
+  return (
+    <Group label={t('properties.instanceGroup')}>
+      <TextField
+        label={t('properties.regionName')}
+        value={region.name}
+        onCommit={(v) => commit('Rename plan region', (s) => updatePlanRegion(s, id, { name: v }))}
+      />
+      <NumberField
+        label={t('view.cutHeight')}
+        value={region.viewRange.cutHeight}
+        onCommit={(v) => setRange({ cutHeight: v })}
+        unit="m"
+        step={0.1}
+        min={0}
+      />
+      <NumberField
+        label={t('view.topOffset')}
+        value={region.viewRange.topOffset}
+        onCommit={(v) => setRange({ topOffset: v })}
+        unit="m"
+        step={0.1}
+      />
+      <NumberField
+        label={t('view.bottomOffset')}
+        value={region.viewRange.bottomOffset}
+        onCommit={(v) => setRange({ bottomOffset: v })}
+        unit="m"
+        step={0.1}
+      />
+      <ReadOnly label={t('properties.area')} value={`${roomArea(region.boundary).toFixed(2)} m²`} />
+    </Group>
   )
 }

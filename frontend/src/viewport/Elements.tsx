@@ -22,7 +22,13 @@ import {
   rotationYFor,
   profileExtents,
   type Box3D,
+  type WallEndAdjust,
 } from '../../../shared/geometry/index'
+import { resolveWallJoins } from '../../../shared/geometry/wallJoin'
+import {
+  curtainWallSolidBoxes,
+  resolveCurtainWall,
+} from '../../../shared/geometry/curtainWall'
 import { triMeshToGeometry } from '../scene/geometryUtils'
 import {
   findType,
@@ -42,18 +48,74 @@ export interface RenderOpts {
   hoveredId: string | null
   /** Ghosted levels render translucent and non-interactive. */
   ghost: boolean
+  /**
+   * C8: this level is the plan UNDERLAY — a reference layer, drawn as flat halftone rather than a
+   * dimmed copy of the real materials, and never interactive. Distinct from `ghost`, which is the
+   * 3D "storey below" treatment and keeps each element's own colour.
+   */
+  underlay?: boolean
+  /**
+   * C7: when present, only these ids render. Used to split one level across several clipped
+   * groups so plan regions can be cut at different heights — every renderer honours it by the
+   * same one-line filter, so a kind cannot accidentally opt out of regions.
+   */
+  only?: ReadonlySet<string>
   onPick: (id: string, e: ThreeEvent<MouseEvent>) => void
   onHover: (id: string | null) => void
 }
 
+/** Which of a level's elements this pass should draw (C7 region partitioning). */
+export function visible<T extends { id: string }>(opts: RenderOpts, items: T[]): T[] {
+  return opts.only ? items.filter((i) => opts.only!.has(i.id)) : items
+}
+
+/**
+ * The pointer props every element `<group>` needs.
+ *
+ * Exported because `Roofs`/`Primitives`/`Stairs`/`Railings`/`CurtainWalls` each used to inline the
+ * same four handlers plus the same `raycast` null-out; with C8's underlay adding a second reason
+ * an element can be non-interactive, five hand-copied versions of that rule would have been five
+ * chances to forget one.
+ */
+export function pickProps(opts: RenderOpts, id: string) {
+  const inert = opts.ghost || opts.underlay === true
+  return {
+    onPointerDown: inert ? undefined : (e: ThreeEvent<MouseEvent>) => opts.onPick(id, e),
+    onPointerOver: inert
+      ? undefined
+      : (e: ThreeEvent<MouseEvent>) => {
+          e.stopPropagation()
+          opts.onHover(id)
+        },
+    onPointerOut: inert ? undefined : () => opts.onHover(null),
+    raycast: inert ? () => null : undefined,
+  }
+}
+
 /** Shared surface material props for selection/hover state. */
-function surfaceProps(
+export function surfaceProps(
   color: string,
   selected: boolean,
   hovered: boolean,
   ghost: boolean,
   theme: CanvasTheme,
+  underlay = false,
 ): JSX.IntrinsicElements['meshStandardMaterial'] {
+  // C8: an underlay is a REFERENCE layer, not a dimmed model. It drops its materials for one flat
+  // halftone so it reads as "another drawing showing through" rather than as faint real geometry
+  // the user might try to click — and it is never highlighted, since it cannot be selected.
+  if (underlay) {
+    return {
+      color: theme.underlay,
+      emissive: '#000000',
+      emissiveIntensity: 0,
+      transparent: true,
+      opacity: 0.28,
+      depthWrite: false,
+      roughness: 1,
+      metalness: 0,
+    }
+  }
   return {
     color: selected ? theme.select : color,
     emissive: selected ? theme.select : hovered ? theme.prehighlight : '#000000',
@@ -77,18 +139,32 @@ function OutlineIf({ show, color }: { show: boolean; color: string }) {
 
 export function Walls({ opts, levelId }: { opts: RenderOpts; levelId: string }) {
   const { scene } = opts
-  const walls = useMemo(() => scene.walls.filter((w) => w.levelId === levelId), [scene.walls, levelId])
+  const walls = useMemo(
+    () => visible(opts, scene.walls.filter((w) => w.levelId === levelId)),
+    [opts, scene.walls, levelId],
+  )
+  // A9: joins are resolved ONCE per level, not per wall — a corner's answer depends on every
+  // member of the junction, so a per-wall resolve would redo the same graph walk N times.
+  const joins = useMemo(() => resolveWallJoins(scene, levelId), [scene, levelId])
   return (
     <>
       {walls.map((wall) => (
-        <WallMesh key={wall.id} wallId={wall.id} opts={opts} />
+        <WallMesh key={wall.id} wallId={wall.id} opts={opts} adjust={joins.get(wall.id)} />
       ))}
     </>
   )
 }
 
-function WallMesh({ wallId, opts }: { wallId: string; opts: RenderOpts }) {
-  const { scene, theme, selectedIds, hoveredId, ghost, onPick, onHover } = opts
+function WallMesh({
+  wallId,
+  opts,
+  adjust,
+}: {
+  wallId: string
+  opts: RenderOpts
+  adjust: WallEndAdjust | undefined
+}) {
+  const { scene, theme, selectedIds, hoveredId, ghost } = opts
   const wall = scene.walls.find((w) => w.id === wallId)
 
   const boxes = useMemo(() => {
@@ -96,8 +172,8 @@ function WallMesh({ wallId, opts }: { wallId: string; opts: RenderOpts }) {
     const resolved = resolveWall(scene, wall)
     if (!resolved) return []
     const openings = scene.openings.filter((o) => o.hostId === wall.id)
-    return wallSolidBoxes(resolved, openings)
-  }, [scene, wall])
+    return wallSolidBoxes(resolved, openings, adjust)
+  }, [scene, wall, adjust])
 
   if (!wall) return null
   const resolved = resolveWall(scene, wall)
@@ -108,26 +184,15 @@ function WallMesh({ wallId, opts }: { wallId: string; opts: RenderOpts }) {
   const color = materialColor(scene, resolved.material)
 
   return (
-    <group
-      onPointerDown={ghost ? undefined : (e) => onPick(wallId, e)}
-      onPointerOver={
-        ghost
-          ? undefined
-          : (e) => {
-              e.stopPropagation()
-              onHover(wallId)
-            }
-      }
-      onPointerOut={ghost ? undefined : () => onHover(null)}
-      // Ghosted levels must not steal picks from the active level.
-      raycast={ghost ? () => null : undefined}
-    >
+    // Ghosted levels and the underlay must not steal picks from the active level.
+    <group {...pickProps(opts, wallId)}>
       {boxes.map((box, i) =>
-        box.topRamp ? (
-          // Wall voiding (B1): a chunk cut to a roof plane has a sloped top, which a plain
-          // BoxGeometry cannot express — build it from the same corners boxCorners() gives every
-          // other consumer (box-select, the exporter), so this can never disagree with them.
-          <RampedBoxMesh
+        box.topRamp || box.endSkew ? (
+          // A box whose faces are not all axis-aligned rectangles: a sloped top from roof voiding
+          // (B1) or a mitred end from a wall join (A9). Neither is expressible as a plain
+          // BoxGeometry, so both build from the same corners boxCorners() gives every other
+          // consumer (box-select, the exporter) — this can never disagree with them.
+          <ShapedBoxMesh
             key={i}
             box={box}
             color={color}
@@ -135,11 +200,12 @@ function WallMesh({ wallId, opts }: { wallId: string; opts: RenderOpts }) {
             hovered={hovered}
             ghost={ghost}
             theme={theme}
+            underlay={opts.underlay}
           />
         ) : (
           <mesh key={i} position={box.center} rotation={[0, box.rotationY, 0]} castShadow receiveShadow>
             <boxGeometry args={box.size} />
-            <meshStandardMaterial {...surfaceProps(color, selected, hovered, ghost, theme)} />
+            <meshStandardMaterial {...surfaceProps(color, selected, hovered, ghost, theme, opts.underlay)} />
             <OutlineIf show={selected && !ghost} color={theme.select} />
           </mesh>
         ),
@@ -148,13 +214,14 @@ function WallMesh({ wallId, opts }: { wallId: string; opts: RenderOpts }) {
   )
 }
 
-function RampedBoxMesh({
+function ShapedBoxMesh({
   box,
   color,
   selected,
   hovered,
   ghost,
   theme,
+  underlay,
 }: {
   box: Box3D
   color: string
@@ -162,6 +229,7 @@ function RampedBoxMesh({
   hovered: boolean
   ghost: boolean
   theme: CanvasTheme
+  underlay?: boolean
 }) {
   // boxCorners() already bakes in this box's world position and rotation (unlike boxGeometry,
   // which relies on the mesh's own position/rotation props), so this mesh sets neither.
@@ -169,7 +237,7 @@ function RampedBoxMesh({
   useEffect(() => () => geom.dispose(), [geom])
   return (
     <mesh geometry={geom} castShadow receiveShadow>
-      <meshStandardMaterial {...surfaceProps(color, selected, hovered, ghost, theme)} />
+      <meshStandardMaterial {...surfaceProps(color, selected, hovered, ghost, theme, underlay)} />
       <OutlineIf show={selected && !ghost} color={theme.select} />
     </mesh>
   )
@@ -182,12 +250,15 @@ function RampedBoxMesh({
 export function Fillings({ opts, levelId }: { opts: RenderOpts; levelId: string }) {
   const { scene } = opts
   const items = useMemo(() => {
-    const wallIds = new Set(scene.walls.filter((w) => w.levelId === levelId).map((w) => w.id))
+    // A filling has no level of its own: it follows its host wall, which also means it follows
+    // that wall into whichever plan-region partition the wall landed in (C7).
+    const hosts = visible(opts, scene.walls.filter((w) => w.levelId === levelId))
+    const wallIds = new Set(hosts.map((w) => w.id))
     return scene.fillings.filter((f) => {
       const o = scene.openings.find((x) => x.id === f.openingId)
       return o ? wallIds.has(o.hostId) : false
     })
-  }, [scene, levelId])
+  }, [opts, scene, levelId])
 
   return (
     <>
@@ -199,7 +270,7 @@ export function Fillings({ opts, levelId }: { opts: RenderOpts; levelId: string 
 }
 
 function FillingMesh({ filling, opts }: { filling: Filling; opts: RenderOpts }) {
-  const { scene, theme, selectedIds, hoveredId, ghost, onPick, onHover } = opts
+  const { scene, theme, selectedIds, hoveredId, ghost } = opts
 
   const parts = useMemo(() => {
     const opening = scene.openings.find((o) => o.id === filling.openingId)
@@ -298,17 +369,7 @@ function FillingMesh({ filling, opts }: { filling: Filling; opts: RenderOpts }) 
     <group
       position={parts.centre}
       rotation={[0, parts.rotationY, 0]}
-      onPointerDown={ghost ? undefined : (e) => onPick(filling.id, e)}
-      onPointerOver={
-        ghost
-          ? undefined
-          : (e) => {
-              e.stopPropagation()
-              onHover(filling.id)
-            }
-      }
-      onPointerOut={ghost ? undefined : () => onHover(null)}
-      raycast={ghost ? () => null : undefined}
+      {...pickProps(opts, filling.id)}
     >
       {parts.meshes.map((m, i) => (
         <mesh key={i} position={m.offset} castShadow>
@@ -347,7 +408,10 @@ function polygonToShape(polygon: Vec2[], holes: Vec2[][] = []): THREE.Shape {
 
 export function Slabs({ opts, levelId }: { opts: RenderOpts; levelId: string }) {
   const { scene } = opts
-  const slabs = useMemo(() => scene.slabs.filter((s) => s.levelId === levelId), [scene.slabs, levelId])
+  const slabs = useMemo(
+    () => visible(opts, scene.slabs.filter((s) => s.levelId === levelId)),
+    [opts, scene.slabs, levelId],
+  )
   return (
     <>
       {slabs.map((s) => (
@@ -358,7 +422,7 @@ export function Slabs({ opts, levelId }: { opts: RenderOpts; levelId: string }) 
 }
 
 function SlabMesh({ slabId, opts }: { slabId: string; opts: RenderOpts }) {
-  const { scene, theme, selectedIds, hoveredId, ghost, onPick, onHover } = opts
+  const { scene, theme, selectedIds, hoveredId, ghost } = opts
   const slab = scene.slabs.find((s) => s.id === slabId)
 
   const built = useMemo(() => {
@@ -393,19 +457,9 @@ function SlabMesh({ slabId, opts }: { slabId: string; opts: RenderOpts }) {
       position={[0, built.resolved.topElevation, 0]}
       receiveShadow
       castShadow
-      onPointerDown={ghost ? undefined : (e) => onPick(slabId, e)}
-      onPointerOver={
-        ghost
-          ? undefined
-          : (e) => {
-              e.stopPropagation()
-              onHover(slabId)
-            }
-      }
-      onPointerOut={ghost ? undefined : () => onHover(null)}
-      raycast={ghost ? () => null : undefined}
+      {...pickProps(opts, slabId)}
     >
-      <meshStandardMaterial {...surfaceProps(color, selected, hovered, ghost, theme)} />
+      <meshStandardMaterial {...surfaceProps(color, selected, hovered, ghost, theme, opts.underlay)} />
       <OutlineIf show={selected && !ghost} color={theme.select} />
     </mesh>
   )
@@ -418,8 +472,8 @@ function SlabMesh({ slabId, opts }: { slabId: string; opts: RenderOpts }) {
 export function Ceilings({ opts, levelId }: { opts: RenderOpts; levelId: string }) {
   const { scene } = opts
   const ceilings = useMemo(
-    () => scene.ceilings.filter((c) => c.levelId === levelId),
-    [scene.ceilings, levelId],
+    () => visible(opts, scene.ceilings.filter((c) => c.levelId === levelId)),
+    [opts, scene.ceilings, levelId],
   )
   return (
     <>
@@ -431,7 +485,7 @@ export function Ceilings({ opts, levelId }: { opts: RenderOpts; levelId: string 
 }
 
 function CeilingMesh({ ceilingId, opts }: { ceilingId: string; opts: RenderOpts }) {
-  const { scene, theme, selectedIds, hoveredId, ghost, onPick, onHover } = opts
+  const { scene, theme, selectedIds, hoveredId, ghost } = opts
   const ceiling = scene.ceilings.find((c) => c.id === ceilingId)
 
   const built = useMemo(() => {
@@ -461,19 +515,9 @@ function CeilingMesh({ ceilingId, opts }: { ceilingId: string; opts: RenderOpts 
       position={[0, built.resolved.bottomElevation + built.resolved.thickness, 0]}
       receiveShadow
       castShadow
-      onPointerDown={ghost ? undefined : (e) => onPick(ceilingId, e)}
-      onPointerOver={
-        ghost
-          ? undefined
-          : (e) => {
-              e.stopPropagation()
-              onHover(ceilingId)
-            }
-      }
-      onPointerOut={ghost ? undefined : () => onHover(null)}
-      raycast={ghost ? () => null : undefined}
+      {...pickProps(opts, ceilingId)}
     >
-      <meshStandardMaterial {...surfaceProps(color, selected, hovered, ghost, theme)} />
+      <meshStandardMaterial {...surfaceProps(color, selected, hovered, ghost, theme, opts.underlay)} />
       <OutlineIf show={selected && !ghost} color={theme.select} />
     </mesh>
   )
@@ -485,7 +529,10 @@ function CeilingMesh({ ceilingId, opts }: { ceilingId: string; opts: RenderOpts 
 
 export function Rooms({ opts, levelId }: { opts: RenderOpts; levelId: string }) {
   const { scene } = opts
-  const rooms = useMemo(() => scene.rooms.filter((r) => r.levelId === levelId), [scene.rooms, levelId])
+  const rooms = useMemo(
+    () => visible(opts, scene.rooms.filter((r) => r.levelId === levelId)),
+    [opts, scene.rooms, levelId],
+  )
   return (
     <>
       {rooms.map((r) => (
@@ -496,7 +543,7 @@ export function Rooms({ opts, levelId }: { opts: RenderOpts; levelId: string }) 
 }
 
 function RoomMesh({ roomId, opts }: { roomId: string; opts: RenderOpts }) {
-  const { scene, theme, selectedIds, hoveredId, ghost, onPick, onHover } = opts
+  const { scene, theme, selectedIds, hoveredId, ghost } = opts
   const room = scene.rooms.find((r) => r.id === roomId)
   const level = room ? findLevel(scene, room.levelId) : undefined
 
@@ -519,17 +566,7 @@ function RoomMesh({ roomId, opts }: { roomId: string; opts: RenderOpts }) {
       geometry={geom}
       position={[0, y, 0]}
       receiveShadow
-      onPointerDown={ghost ? undefined : (e) => onPick(roomId, e)}
-      onPointerOver={
-        ghost
-          ? undefined
-          : (e) => {
-              e.stopPropagation()
-              onHover(roomId)
-            }
-      }
-      onPointerOut={ghost ? undefined : () => onHover(null)}
-      raycast={ghost ? () => null : undefined}
+      {...pickProps(opts, roomId)}
     >
       <meshStandardMaterial
         color={selected ? theme.select : materialColor(scene, room.floorMaterial)}
@@ -550,10 +587,10 @@ function RoomMesh({ roomId, opts }: { roomId: string; opts: RenderOpts }) {
 // ---------------------------------------------------------------------------
 
 export function Columns({ opts, levelId }: { opts: RenderOpts; levelId: string }) {
-  const { scene, theme, selectedIds, hoveredId, ghost, onPick, onHover } = opts
+  const { scene, theme, selectedIds, hoveredId, ghost } = opts
   const columns = useMemo(
-    () => scene.columns.filter((c) => c.levelId === levelId),
-    [scene.columns, levelId],
+    () => visible(opts, scene.columns.filter((c) => c.levelId === levelId)),
+    [opts, scene.columns, levelId],
   )
   return (
     <>
@@ -572,17 +609,7 @@ export function Columns({ opts, levelId }: { opts: RenderOpts; levelId: string }
             rotation={[0, box.rotationY, 0]}
             castShadow
             receiveShadow
-            onPointerDown={ghost ? undefined : (e) => onPick(col.id, e)}
-            onPointerOver={
-              ghost
-                ? undefined
-                : (e) => {
-                    e.stopPropagation()
-                    onHover(col.id)
-                  }
-            }
-            onPointerOut={ghost ? undefined : () => onHover(null)}
-            raycast={ghost ? () => null : undefined}
+            {...pickProps(opts, col.id)}
           >
             {round ? (
               <cylinderGeometry args={[w / 2, w / 2, box.size[1], 24]} />
@@ -590,7 +617,7 @@ export function Columns({ opts, levelId }: { opts: RenderOpts; levelId: string }
               <boxGeometry args={[w, box.size[1], d]} />
             )}
             <meshStandardMaterial
-              {...surfaceProps(materialColor(scene, type.material), selected, hovered, ghost, theme)}
+              {...surfaceProps(materialColor(scene, type.material), selected, hovered, ghost, theme, opts.underlay)}
             />
             <OutlineIf show={selected && !ghost} color={theme.select} />
           </mesh>
@@ -601,8 +628,11 @@ export function Columns({ opts, levelId }: { opts: RenderOpts; levelId: string }
 }
 
 export function Beams({ opts, levelId }: { opts: RenderOpts; levelId: string }) {
-  const { scene, theme, selectedIds, hoveredId, ghost, onPick, onHover } = opts
-  const beams = useMemo(() => scene.beams.filter((b) => b.levelId === levelId), [scene.beams, levelId])
+  const { scene, theme, selectedIds, hoveredId, ghost } = opts
+  const beams = useMemo(
+    () => visible(opts, scene.beams.filter((b) => b.levelId === levelId)),
+    [opts, scene.beams, levelId],
+  )
   return (
     <>
       {beams.map((beam) => {
@@ -618,21 +648,11 @@ export function Beams({ opts, levelId }: { opts: RenderOpts; levelId: string }) 
             rotation={[0, box.rotationY, (beam.crossSectionRotation * Math.PI) / 180]}
             castShadow
             receiveShadow
-            onPointerDown={ghost ? undefined : (e) => onPick(beam.id, e)}
-            onPointerOver={
-              ghost
-                ? undefined
-                : (e) => {
-                    e.stopPropagation()
-                    onHover(beam.id)
-                  }
-            }
-            onPointerOut={ghost ? undefined : () => onHover(null)}
-            raycast={ghost ? () => null : undefined}
+            {...pickProps(opts, beam.id)}
           >
             <boxGeometry args={box.size} />
             <meshStandardMaterial
-              {...surfaceProps(materialColor(scene, type.material), selected, hovered, ghost, theme)}
+              {...surfaceProps(materialColor(scene, type.material), selected, hovered, ghost, theme, opts.underlay)}
             />
             <OutlineIf show={selected && !ghost} color={theme.select} />
           </mesh>
@@ -647,10 +667,10 @@ export function Beams({ opts, levelId }: { opts: RenderOpts; levelId: string }) 
 // ---------------------------------------------------------------------------
 
 export function Furniture({ opts, levelId }: { opts: RenderOpts; levelId: string }) {
-  const { scene, theme, selectedIds, hoveredId, ghost, onPick, onHover } = opts
+  const { scene, theme, selectedIds, hoveredId, ghost } = opts
   const items = useMemo(
-    () => scene.furniture.filter((f) => f.levelId === levelId),
-    [scene.furniture, levelId],
+    () => visible(opts, scene.furniture.filter((f) => f.levelId === levelId)),
+    [opts, scene.furniture, levelId],
   )
   return (
     <>
@@ -673,21 +693,11 @@ export function Furniture({ opts, levelId }: { opts: RenderOpts; levelId: string
             rotation={[0, (-item.rotation * Math.PI) / 180, 0]}
             scale={item.scale}
             castShadow
-            onPointerDown={ghost ? undefined : (e) => onPick(item.id, e)}
-            onPointerOver={
-              ghost
-                ? undefined
-                : (e) => {
-                    e.stopPropagation()
-                    onHover(item.id)
-                  }
-            }
-            onPointerOut={ghost ? undefined : () => onHover(null)}
-            raycast={ghost ? () => null : undefined}
+            {...pickProps(opts, item.id)}
           >
             <boxGeometry args={[fw, h, fd]} />
             <meshStandardMaterial
-              {...surfaceProps(materialColor(scene, type.material), selected, hovered, ghost, theme)}
+              {...surfaceProps(materialColor(scene, type.material), selected, hovered, ghost, theme, opts.underlay)}
             />
             <OutlineIf show={selected && !ghost} color={theme.select} />
           </mesh>
@@ -715,4 +725,84 @@ export function levelTopElevation(scene: SceneGraph, levelId: string): number {
   const level = findLevel(scene, levelId)
   if (!level) return 0
   return resolveTopElevation(scene, { kind: 'unconnected', height: level.height }, level.elevation)
+}
+
+// ---------------------------------------------------------------------------
+// Curtain walls (B4)
+// ---------------------------------------------------------------------------
+
+/**
+ * Framing and glazing come from `curtainWallSolidBoxes` already split by material, so this
+ * renderer never re-derives which box is which — the same list the exporter draws from.
+ */
+export function CurtainWalls({ opts, levelId }: { opts: RenderOpts; levelId: string }) {
+  const { scene } = opts
+  const items = useMemo(
+    () => visible(opts, scene.curtainWalls.filter((c) => c.levelId === levelId)),
+    [opts, scene.curtainWalls, levelId],
+  )
+  return (
+    <>
+      {items.map((cw) => (
+        <CurtainWallMesh key={cw.id} curtainWallId={cw.id} opts={opts} />
+      ))}
+    </>
+  )
+}
+
+function CurtainWallMesh({
+  curtainWallId,
+  opts,
+}: {
+  curtainWallId: string
+  opts: RenderOpts
+}) {
+  const { scene, theme, selectedIds, hoveredId, ghost } = opts
+  const cw = scene.curtainWalls.find((c) => c.id === curtainWallId)
+
+  const solids = useMemo(() => {
+    if (!cw) return null
+    const resolved = resolveCurtainWall(scene, cw)
+    return resolved ? { ...curtainWallSolidBoxes(resolved), type: resolved.type } : null
+  }, [scene, cw])
+
+  if (!cw || !solids) return null
+
+  const selected = selectedIds.includes(curtainWallId)
+  const hovered = hoveredId === curtainWallId
+  const frameColor = materialColor(scene, solids.type.mullionMaterial)
+  const panelColor = materialColor(scene, solids.type.panelMaterial)
+
+  return (
+    <group {...pickProps(opts, curtainWallId)}>
+      {solids.frame.map((box, i) => (
+        <mesh
+          key={`f${i}`}
+          position={box.center}
+          rotation={[0, box.rotationY, 0]}
+          castShadow
+          receiveShadow
+        >
+          <boxGeometry args={box.size} />
+          <meshStandardMaterial
+            {...surfaceProps(frameColor, selected, hovered, ghost, theme, opts.underlay)}
+          />
+          <OutlineIf show={selected && !ghost} color={theme.select} />
+        </mesh>
+      ))}
+      {solids.panels.map((box, i) => (
+        <mesh key={`p${i}`} position={box.center} rotation={[0, box.rotationY, 0]} receiveShadow>
+          <boxGeometry args={box.size} />
+          <meshStandardMaterial
+            {...surfaceProps(panelColor, selected, hovered, ghost, theme, opts.underlay)}
+            // Glazing is glazing: translucent unless the underlay branch has already taken over
+            // the material entirely.
+            transparent
+            opacity={opts.underlay ? 0.28 : ghost ? 0.14 : 0.4}
+            depthWrite={false}
+          />
+        </mesh>
+      ))}
+    </group>
+  )
 }

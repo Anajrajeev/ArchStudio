@@ -11,6 +11,9 @@ import {
   findStairType,
   findRailingType,
   findCeilingType,
+  findCurtainWallType,
+  findPlanView,
+  defaultViewRange,
   type Baseline,
   type SceneGraph,
   type Vec2,
@@ -48,6 +51,8 @@ import {
   addRailing,
   addSlabOpening,
   addCeiling,
+  addCurtainWall,
+  addPlanRegion,
 } from '../scene/mutations'
 import { defaultStair } from '../../../shared/geometry/stair'
 import { defaultRailing } from '../../../shared/geometry/railing'
@@ -212,6 +217,23 @@ export function toolHint(tool: Tool, pointCount: number, wallMode: WallMode = 'l
         prompt: 'Click a wall on the side the copy should go',
         modifiers: 'Set the distance in the ribbon · Esc cancel',
       }
+    case 'curtainwall':
+      return pointCount === 0
+        ? { prompt: 'Click the curtain wall start point', modifiers: 'Esc cancel' }
+        : {
+            prompt: 'Click the end point — bays are set by the type, not drawn',
+            modifiers: 'Tab length/angle · X/Y axis lock · Esc finish',
+          }
+    case 'planregion':
+      return pointCount < 3
+        ? {
+            prompt: `Click the plan region boundary (${pointCount}/3 minimum)`,
+            modifiers: 'Esc cancel',
+          }
+        : {
+            prompt: 'Click more vertices, or click the first point to close',
+            modifiers: 'Enter close · Backspace undo point · Esc cancel',
+          }
   }
 }
 
@@ -228,7 +250,13 @@ export function modifyHint(tool: Tool, hasRef: boolean): string {
 
 /** Does this tool close a loop (slab, room, ceiling) rather than collect a fixed number of points? */
 export function isLoopTool(tool: Tool): boolean {
-  return tool === 'slab' || tool === 'room' || tool === 'roof' || tool === 'ceiling'
+  return (
+    tool === 'slab' ||
+    tool === 'room' ||
+    tool === 'roof' ||
+    tool === 'ceiling' ||
+    tool === 'planregion'
+  )
 }
 
 /**
@@ -309,7 +337,8 @@ export function isTypedPlacementTool(tool: Tool): boolean {
     tool === 'primitive' ||
     tool === 'stair' ||
     tool === 'railing' ||
-    tool === 'ceiling'
+    tool === 'ceiling' ||
+    tool === 'curtainwall'
   )
 }
 
@@ -531,6 +560,59 @@ export function buildCommit(state: EditorState, points: Vec2[]): CommitResult | 
           }),
         keepPoints: [],
         selectAfter: () => id,
+      }
+    }
+
+    case 'curtainwall': {
+      if (points.length < 2) return null
+      const [start, end] = points
+      if (distance(start, end) < 1e-6) return null
+      if (!findCurtainWallType(state.scene, state.activeCurtainWallTypeId)) return null
+      const level = findLevel(state.scene, activeLevelId)
+      let newId = ''
+      return {
+        label: 'Add curtain wall',
+        produce: (scene) => {
+          const r = addCurtainWall(scene, {
+            typeId: state.activeCurtainWallTypeId,
+            levelId: activeLevelId,
+            baseline: { kind: 'line', start, end },
+            baseOffset: 0,
+            top: { kind: 'unconnected', height: level?.height ?? 2.8 },
+          })
+          newId = r.id
+          return r.scene
+        },
+        // Chains from the last endpoint exactly as the wall tool does — a glazed facade is
+        // usually drawn as a run, not as isolated panels.
+        keepPoints: [end],
+        selectAfter: () => newId,
+      }
+    }
+
+    case 'planregion': {
+      if (points.length < 3) return null
+      // A plan region belongs to a VIEW, so it needs the active level to have one. Every level
+      // gets a plan view when it is created (C7), so this only fails on a scene with no level.
+      const view = findPlanView(state.scene, activeLevelId)
+      if (!view) return null
+      let newId = ''
+      return {
+        label: 'Add plan region',
+        produce: (scene) => {
+          const r = addPlanRegion(scene, {
+            viewId: view.id,
+            name: `Region ${scene.planRegions.filter((p) => p.viewId === view.id).length + 1}`,
+            boundary: points,
+            // Seeded from the view's own range so the region starts identical to its
+            // surroundings and the user changes only the one number they came here for.
+            viewRange: { ...(view.viewRange ?? defaultViewRange(2.8)) },
+          })
+          newId = r.id
+          return r.scene
+        },
+        keepPoints: [],
+        selectAfter: () => newId,
       }
     }
 

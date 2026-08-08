@@ -10,17 +10,19 @@
  * Properties panel surfaces the error text so the user knows why.
  */
 import { useEffect, useMemo } from 'react'
-import type { ThreeEvent } from '@react-three/fiber'
 import { Edges } from '@react-three/drei'
 import * as THREE from 'three'
 import { resolveRoof, isRoofError } from '../../../shared/geometry/roof'
 import { findType, type SceneGraph } from '../../../shared/types/scene'
 import { materialColor } from '../scene/materials'
-import type { RenderOpts } from './Elements'
+import { pickProps, surfaceProps, visible, type RenderOpts } from './Elements'
 
 export function Roofs({ opts, levelId }: { opts: RenderOpts; levelId: string }) {
   const { scene } = opts
-  const roofs = useMemo(() => scene.roofs.filter((r) => r.levelId === levelId), [scene.roofs, levelId])
+  const roofs = useMemo(
+    () => visible(opts, scene.roofs.filter((r) => r.levelId === levelId)),
+    [opts, scene.roofs, levelId],
+  )
   return (
     <>
       {roofs.map((r) => (
@@ -44,7 +46,7 @@ function facesToGeometry(faces: { vertices: [number, number, number][] }[]): THR
 }
 
 function RoofMesh({ roofId, opts }: { roofId: string; opts: RenderOpts }) {
-  const { scene, theme, selectedIds, hoveredId, ghost, onPick, onHover } = opts
+  const { scene, theme, selectedIds, hoveredId, ghost } = opts
   const roof = scene.roofs.find((r) => r.id === roofId)
 
   const resolved = useMemo(() => (roof ? resolveRoof(roof) : null), [roof])
@@ -72,27 +74,10 @@ function RoofMesh({ roofId, opts }: { roofId: string; opts: RenderOpts }) {
       geometry={geom}
       receiveShadow
       castShadow
-      onPointerDown={ghost ? undefined : (e: ThreeEvent<MouseEvent>) => onPick(roofId, e)}
-      onPointerOver={
-        ghost
-          ? undefined
-          : (e: ThreeEvent<MouseEvent>) => {
-              e.stopPropagation()
-              onHover(roofId)
-            }
-      }
-      onPointerOut={ghost ? undefined : () => onHover(null)}
-      raycast={ghost ? () => null : undefined}
+      {...pickProps(opts, roofId)}
     >
       <meshStandardMaterial
-        color={selected ? theme.select : color}
-        emissive={selected ? theme.select : hovered ? theme.prehighlight : '#000000'}
-        emissiveIntensity={selected ? 0.35 : hovered ? 0.18 : 0}
-        transparent={ghost}
-        opacity={ghost ? 0.18 : 1}
-        depthWrite={!ghost}
-        roughness={0.85}
-        metalness={0.02}
+        {...surfaceProps(color, selected, hovered, ghost, theme, opts.underlay)}
         side={THREE.DoubleSide}
       />
       {selected && !ghost && <Edges threshold={20} color={theme.select} />}

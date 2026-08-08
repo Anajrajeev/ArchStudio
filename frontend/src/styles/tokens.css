@@ -187,6 +187,10 @@
   --grid-minor-plan: #c9c9c9;
   --grid-major-plan: #a8a8a8;
   --plan-ink: #1c1c1c;
+  /* C8 underlay: one flat, desaturated ink for the reference level. Deliberately a blue-grey
+     rather than a dimmed copy of each element's own material, so an underlaid wall can never be
+     mistaken for a faint real one. */
+  --underlay-ink: #6f7d8c;
 }
 
 /* =========================================================================
@@ -241,6 +245,7 @@
   --grid-minor-plan: #dcdcdc;
   --grid-major-plan: #bcbcbc;
   --plan-ink: #1c1c1c;
+  --underlay-ink: #8b98a6;
 }
 
 /* Follow the OS when the user hasn't chosen — the Vectorworks model. */

@@ -28,6 +28,7 @@ import {
   segmentIntersection,
   wallSolidBoxes,
 } from '../../../shared/geometry/index'
+import { resolveWallJoins } from '../../../shared/geometry/wallJoin'
 import {
   findLevel,
   findType,
@@ -121,12 +122,15 @@ export function silhouettes(scene: SceneGraph, levelId: string): Silhouette[] {
     if (corners.length > 0) out.push({ id, corners, edges })
   }
 
+  // A9: the same per-level join resolve the renderer and exporter do, so a mitred corner is
+  // rubber-band-selectable at exactly the shape it is drawn at.
+  const joins = resolveWallJoins(scene, levelId)
   for (const wall of scene.walls) {
     if (wall.levelId !== levelId) continue
     const resolved = resolveWall(scene, wall)
     if (!resolved) continue
     const openings = scene.openings.filter((o) => o.hostId === wall.id)
-    fromBoxes(wall.id, wallSolidBoxes(resolved, openings))
+    fromBoxes(wall.id, wallSolidBoxes(resolved, openings, joins.get(wall.id)))
   }
 
   for (const column of scene.columns) {

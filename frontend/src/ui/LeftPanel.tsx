@@ -9,9 +9,23 @@
 import { useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useEditor } from '../scene/store'
-import { addLevel, deleteElement, elementLabel, restackLevels, updateLevel } from '../scene/mutations'
+import {
+  addLevel,
+  deleteElement,
+  elementLabel,
+  levelIdOf,
+  restackLevels,
+  updateLevel,
+  updateView,
+} from '../scene/mutations'
 import type { ElementKind } from '../scene/mutations'
 import { roomArea } from '../../../shared/geometry/index'
+import {
+  defaultViewRange,
+  findPlanView,
+  type ViewRange,
+} from '../../../shared/types/scene'
+import { NumberField } from './PropertiesPanel'
 import {
   IconPlus,
   IconTrash,
@@ -34,6 +48,10 @@ import {
   IconStair,
   IconRailing,
   IconCeiling,
+  IconCurtainWall,
+  IconPlanRegion,
+  IconJoin,
+  IconGroup,
 } from './Icons'
 import { freePrimitives, rootBooleanNodes } from '../../../shared/geometry/booleanTree'
 
@@ -48,6 +66,8 @@ export default function LeftPanel() {
       }}
     >
       <LevelsSection />
+      <hr className="divider" />
+      <ViewSection />
       <hr className="divider" />
       <ModelTreeSection />
     </aside>
@@ -302,6 +322,10 @@ const KIND_ICON: Partial<Record<ElementKind, React.ReactNode>> = {
   stair: <IconStair />,
   railing: <IconRailing />,
   ceiling: <IconCeiling />,
+  curtainWall: <IconCurtainWall />,
+  wallJoin: <IconJoin />,
+  group: <IconGroup />,
+  planRegion: <IconPlanRegion />,
 }
 
 function ModelTreeSection() {
@@ -406,6 +430,34 @@ function ModelTreeSection() {
         label: t('tree.ceilings'),
         kind: 'ceiling' as ElementKind,
         ids: scene.ceilings.filter((c) => c.levelId === activeLevelId).map((c) => c.id),
+      },
+      {
+        key: 'curtainWalls',
+        label: t('tree.curtainWalls'),
+        kind: 'curtainWall' as ElementKind,
+        ids: scene.curtainWalls.filter((c) => c.levelId === activeLevelId).map((c) => c.id),
+      },
+      {
+        key: 'wallJoins',
+        label: t('tree.wallJoins'),
+        kind: 'wallJoin' as ElementKind,
+        ids: scene.wallJoins.filter((j) => j.levelId === activeLevelId).map((j) => j.id),
+      },
+      {
+        // Groups may span levels by design (D-028), so they are listed by whichever level their
+        // first member sits on rather than being hidden when the selection crosses storeys.
+        key: 'groups',
+        label: t('tree.groups'),
+        kind: 'group' as ElementKind,
+        ids: scene.groups.filter((g) => levelIdOf(scene, g.id) === activeLevelId).map((g) => g.id),
+      },
+      {
+        key: 'planRegions',
+        label: t('tree.planRegions'),
+        kind: 'planRegion' as ElementKind,
+        ids: scene.planRegions
+          .filter((r) => scene.views.find((v) => v.id === r.viewId)?.levelId === activeLevelId)
+          .map((r) => r.id),
       },
     ].filter((g) => g.ids.length > 0)
   }, [scene, activeLevelId, t])
@@ -514,3 +566,129 @@ function ModelTreeSection() {
 }
 
 export { IconEye, IconEyeOff }
+
+/**
+ * View range + underlay (C7 / C8).
+ *
+ * This is the first UI in the app that edits a `SavedView` — `views[]` existed in the schema from
+ * C1 but nothing read it until now (D-029). The view is found rather than created: every level
+ * gets its plan view when the level is created, so a camera toggle never has to commit a scene
+ * mutation.
+ *
+ * Plan-only. In 3D a "cut" just means "hide the storeys above", which is what the existing toggle
+ * already does and what it has always meant there — a view RANGE is a drawing concept.
+ */
+function ViewSection() {
+  const { t } = useTranslation()
+  const [open, setOpen] = useState(true)
+  const scene = useEditor((s) => s.scene)
+  const activeLevelId = useEditor((s) => s.activeLevelId)
+  const viewMode = useEditor((s) => s.viewMode)
+  const commit = useEditor((s) => s.commit)
+  const select = useEditor((s) => s.select)
+  const selectedIds = useEditor((s) => s.selectedIds)
+
+  const view = findPlanView(scene, activeLevelId)
+  const level = scene.levels.find((l) => l.id === activeLevelId)
+  if (viewMode !== 'plan' || !view || !level) return null
+
+  const range = view.viewRange ?? defaultViewRange(level.height)
+  const regions = scene.planRegions.filter((r) => r.viewId === view.id)
+
+  const setRange = (patch: Partial<ViewRange>) =>
+    commit('Set view range', (sc) => updateView(sc, view.id, { viewRange: { ...range, ...patch } }))
+
+  return (
+    <div>
+      <SectionHeader label={t('view.range')} open={open} onToggle={() => setOpen(!open)} />
+      {open && (
+        <div style={{ padding: '0 var(--sp-8) var(--sp-8)', display: 'grid', gap: 'var(--sp-4)' }}>
+          <div className="prop-grid">
+            <NumberField
+              label={t('view.cutHeight')}
+              value={range.cutHeight}
+              onCommit={(v) => setRange({ cutHeight: v })}
+              unit="m"
+              step={0.1}
+              min={0}
+            />
+            <NumberField
+              label={t('view.topOffset')}
+              value={range.topOffset}
+              onCommit={(v) => setRange({ topOffset: v })}
+              unit="m"
+              step={0.1}
+            />
+            <NumberField
+              label={t('view.bottomOffset')}
+              value={range.bottomOffset}
+              onCommit={(v) => setRange({ bottomOffset: v })}
+              unit="m"
+              step={0.1}
+            />
+            <NumberField
+              label={t('view.viewDepth')}
+              value={range.viewDepth}
+              onCommit={(v) => setRange({ viewDepth: Math.max(0, v) })}
+              unit="m"
+              step={0.1}
+              min={0}
+            />
+          </div>
+          <span style={{ fontSize: 'var(--fs-label)', color: 'var(--text-dim)' }}>
+            {t('view.rangeHint')}
+          </span>
+
+          <div className="prop-grid">
+            <label className="prop-label" htmlFor="underlay-level">
+              {t('view.underlay')}
+            </label>
+            <select
+              id="underlay-level"
+              className="select"
+              value={view.underlayLevelId ?? ''}
+              onChange={(e) =>
+                commit('Set underlay', (sc) =>
+                  updateView(sc, view.id, { underlayLevelId: e.target.value || null }),
+                )
+              }
+            >
+              <option value="">{t('view.underlayNone')}</option>
+              {scene.levels
+                .filter((l) => l.id !== activeLevelId)
+                .map((l) => (
+                  <option key={l.id} value={l.id}>
+                    {l.name}
+                  </option>
+                ))}
+            </select>
+          </div>
+          <span style={{ fontSize: 'var(--fs-label)', color: 'var(--text-dim)' }}>
+            {t('view.underlayHint')}
+          </span>
+
+          {regions.length > 0 && (
+            <>
+              <span className="prop-label" style={{ marginTop: 'var(--sp-4)' }}>
+                {t('view.regions')}
+              </span>
+              {regions.map((r) => (
+                <button
+                  key={r.id}
+                  className="btn"
+                  style={{
+                    justifyContent: 'flex-start',
+                    background: selectedIds.includes(r.id) ? 'var(--surface-300)' : undefined,
+                  }}
+                  onClick={() => select(r.id)}
+                >
+                  {r.name} · {r.viewRange.cutHeight.toFixed(2)}m
+                </button>
+              ))}
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}

@@ -7,6 +7,7 @@ import {
   assemblyThickness,
   findLevel,
   findType,
+  planViewFor,
   type SceneGraph,
   type Level,
   type Wall,
@@ -36,6 +37,11 @@ import {
   type Stair,
   type Railing,
   type Ceiling,
+  type CurtainWall,
+  type WallJoin,
+  type ElementGroup,
+  type PlanRegion,
+  type SavedView,
 } from '../../../shared/types/scene'
 import { resolveWall, baselineLength } from '../../../shared/geometry/index'
 import { booleanOpLabel } from '../../../shared/geometry/booleanTree'
@@ -67,6 +73,10 @@ export type ElementKind =
   | 'stair'
   | 'railing'
   | 'ceiling'
+  | 'curtainWall'
+  | 'wallJoin'
+  | 'group'
+  | 'planRegion'
 
 export interface SelectedElement {
   kind: ElementKind
@@ -93,6 +103,10 @@ export function findElement(scene: SceneGraph, id: string): SelectedElement | nu
   if (scene.stairs.some((s) => s.id === id)) return { kind: 'stair', id }
   if (scene.railings.some((r) => r.id === id)) return { kind: 'railing', id }
   if (scene.ceilings.some((c) => c.id === id)) return { kind: 'ceiling', id }
+  if (scene.curtainWalls.some((c) => c.id === id)) return { kind: 'curtainWall', id }
+  if (scene.wallJoins.some((j) => j.id === id)) return { kind: 'wallJoin', id }
+  if (scene.groups.some((g) => g.id === id)) return { kind: 'group', id }
+  if (scene.planRegions.some((p) => p.id === id)) return { kind: 'planRegion', id }
   if (scene.levels.some((l) => l.id === id)) return { kind: 'level', id }
   return null
 }
@@ -125,6 +139,25 @@ export function levelIdOf(scene: SceneGraph, id: string): string | null {
   if (railing) return railing.levelId
   const ceiling = scene.ceilings.find((c) => c.id === id)
   if (ceiling) return ceiling.levelId
+  const curtainWall = scene.curtainWalls.find((c) => c.id === id)
+  if (curtainWall) return curtainWall.levelId
+  const wallJoin = scene.wallJoins.find((j) => j.id === id)
+  if (wallJoin) return wallJoin.levelId
+  // A group has no level of its own — it reports whichever level its first resolvable member is
+  // on, which is what the model tree needs and all any caller asks of it. A group deliberately
+  // MAY span levels (a repeated stair-and-landing assembly is the obvious case).
+  const group = scene.groups.find((g) => g.id === id)
+  if (group) {
+    for (const memberId of group.memberIds) {
+      const level = levelIdOf(scene, memberId)
+      if (level) return level
+    }
+    return null
+  }
+  const planRegion = scene.planRegions.find((p) => p.id === id)
+  if (planRegion) {
+    return scene.views.find((v) => v.id === planRegion.viewId)?.levelId ?? null
+  }
   const opening = scene.openings.find((o) => o.id === id)
   if (opening) return levelIdOf(scene, opening.hostId)
   const filling = scene.fillings.find((f) => f.id === id)
@@ -149,7 +182,10 @@ export function addLevel(scene: SceneGraph, name?: string, height = 2.8): SceneG
     isBuildingStory: true,
     computationHeight: 0,
   }
-  return { ...scene, levels: [...scene.levels, level] }
+  // Every level gets its plan view up front (C7/D-029). Creating it here rather than lazily on
+  // first use is what keeps entering plan mode from having to commit a scene mutation — and an
+  // undo entry — behind a camera button.
+  return { ...scene, levels: [...scene.levels, level], views: [...scene.views, planViewFor(level)] }
 }
 
 export function updateLevel(scene: SceneGraph, id: string, patch: Partial<Level>): SceneGraph {
@@ -592,6 +628,33 @@ export function moveElement(scene: SceneGraph, id: string, delta: Vec2): SceneGr
       const c = scene.ceilings.find((x) => x.id === id)!
       return updateCeiling(scene, id, { boundary: c.boundary.map((p) => shift(p, dx, dy)) })
     }
+    case 'curtainWall': {
+      const c = scene.curtainWalls.find((x) => x.id === id)!
+      return updateCurtainWall(scene, id, {
+        baseline: {
+          ...c.baseline,
+          start: shift(c.baseline.start, dx, dy),
+          end: shift(c.baseline.end, dx, dy),
+        },
+      })
+    }
+    case 'wallJoin': {
+      // A join has no independent position — it is wherever its walls meet. Moving it moves the
+      // walls, and the point follows so the join keeps describing the same corner.
+      const j = scene.wallJoins.find((x) => x.id === id)!
+      const moved = j.memberIds.reduce((acc, m) => moveElement(acc, m, delta), scene)
+      return updateWallJoin(moved, id, { point: shift(j.point, dx, dy) })
+    }
+    case 'group': {
+      // The same reasoning as a boolean node one case up: a group has no position of its own, so
+      // moving it moves every member and the assembly keeps its shape instead of shearing.
+      const g = scene.groups.find((x) => x.id === id)!
+      return g.memberIds.reduce((acc, memberId) => moveElement(acc, memberId, delta), scene)
+    }
+    case 'planRegion': {
+      const p = scene.planRegions.find((x) => x.id === id)!
+      return updatePlanRegion(scene, id, { boundary: p.boundary.map((q) => shift(q, dx, dy)) })
+    }
     case 'opening':
     case 'filling': {
       // An opening is hosted — dragging it slides it along the wall rather than off it.
@@ -693,6 +756,24 @@ export function transformElement(scene: SceneGraph, id: string, xf: Transform2D)
     case 'ceiling': {
       const c = scene.ceilings.find((x) => x.id === id)!
       return updateCeiling(scene, id, { boundary: c.boundary.map(p) })
+    }
+    case 'curtainWall': {
+      const c = scene.curtainWalls.find((x) => x.id === id)!
+      return updateCurtainWall(scene, id, { baseline: transformBaseline(c.baseline, xf) })
+    }
+    case 'wallJoin': {
+      const j = scene.wallJoins.find((x) => x.id === id)!
+      const moved = j.memberIds.reduce((acc, m) => transformElement(acc, m, xf), scene)
+      return updateWallJoin(moved, id, { point: p(j.point) })
+    }
+    case 'group': {
+      // Same as the boolean case above: transform the members, never the node.
+      const g = scene.groups.find((x) => x.id === id)!
+      return g.memberIds.reduce((acc, memberId) => transformElement(acc, memberId, xf), scene)
+    }
+    case 'planRegion': {
+      const pr = scene.planRegions.find((x) => x.id === id)!
+      return updatePlanRegion(scene, id, { boundary: pr.boundary.map(p) })
     }
     default:
       return scene
@@ -807,7 +888,35 @@ export function duplicateElement(
       }
       return { scene: { ...scene, ceilings: [...scene.ceilings, copy] }, id: copy.id }
     }
+    case 'curtainWall': {
+      const c = scene.curtainWalls.find((x) => x.id === id)!
+      const copy: CurtainWall = {
+        ...c,
+        id: newId('cw'),
+        baseline: { ...c.baseline, start: [...c.baseline.start] as Vec2, end: [...c.baseline.end] as Vec2 },
+      }
+      return { scene: { ...scene, curtainWalls: [...scene.curtainWalls, copy] }, id: copy.id }
+    }
+    case 'group': {
+      // Same reasoning as the boolean case: deep-copy the members and put the copies in a NEW
+      // group. Sharing members would mean dragging the copy also moved the original, so the two
+      // "groups" would not be independent objects at all.
+      const g = scene.groups.find((x) => x.id === id)!
+      let next = scene
+      const copiedMemberIds: string[] = []
+      for (const memberId of g.memberIds) {
+        const copied = duplicateElement(next, memberId)
+        if (!copied) return null
+        next = copied.scene
+        copiedMemberIds.push(copied.id)
+      }
+      const copy: ElementGroup = { ...g, id: newId('grp'), memberIds: copiedMemberIds }
+      return { scene: { ...next, groups: [...next.groups, copy] }, id: copy.id }
+    }
     default:
+      // A wall join and a plan region are deliberately NOT duplicable. A join describes one
+      // specific corner and a region belongs to one specific view; a second copy of either on top
+      // of the original would be meaningless rather than useful.
       return null
   }
 }
@@ -835,6 +944,8 @@ export function setElementType(scene: SceneGraph, id: string, typeId: string): S
       return updateRailing(scene, id, { typeId })
     case 'ceiling':
       return updateCeiling(scene, id, { typeId })
+    case 'curtainWall':
+      return updateCurtainWall(scene, id, { typeId })
     case 'filling':
       return syncOpeningToFilling(updateFilling(scene, id, { typeId }), id)
     default:
@@ -849,7 +960,29 @@ export function setElementType(scene: SceneGraph, id: string, typeId: string): S
 export function deleteElement(scene: SceneGraph, id: string): SceneGraph {
   const el = findElement(scene, id)
   if (!el) return scene
+  const next = deleteElementInner(scene, el, id)
+  return next === scene ? scene : pruneDanglingReferences(next)
+}
 
+/**
+ * Repair the two collections that reference elements by id but are not owned by them: wall joins
+ * (A9) and groups (D5).
+ *
+ * Run after EVERY delete rather than case by case, because a delete cascades — removing a wall
+ * also removes its openings and fillings — and a per-case fix would have to repeat that reasoning
+ * in every branch. A join or group left pointing at a gone element would refuse to resolve from
+ * then on, which is the failure `pruneBooleanOperand` already exists to prevent for booleans.
+ */
+function pruneDanglingReferences(scene: SceneGraph): SceneGraph {
+  const wallJoins = scene.wallJoins
+    .map((j) => ({ ...j, memberIds: j.memberIds.filter((m) => scene.walls.some((w) => w.id === m)) }))
+    .filter((j) => j.memberIds.length >= 2)
+  const groups = pruneGroups(scene, scene.groups)
+  if (wallJoins.length === scene.wallJoins.length && groups === scene.groups) return scene
+  return { ...scene, wallJoins, groups }
+}
+
+function deleteElementInner(scene: SceneGraph, el: SelectedElement, id: string): SceneGraph {
   switch (el.kind) {
     case 'wall': {
       const doomedOpenings = scene.openings.filter((o) => o.hostId === id).map((o) => o.id)
@@ -913,14 +1046,43 @@ export function deleteElement(scene: SceneGraph, id: string): SceneGraph {
       return { ...scene, railings: scene.railings.filter((r) => r.id !== id) }
     case 'ceiling':
       return { ...scene, ceilings: scene.ceilings.filter((c) => c.id !== id) }
+    case 'curtainWall':
+      return { ...scene, curtainWalls: scene.curtainWalls.filter((c) => c.id !== id) }
+    case 'wallJoin':
+      // Deleting the join IS unjoining: the walls it held are untouched and simply stop being
+      // trimmed to one another. There is no separate "disallow join" state to leave behind.
+      return { ...scene, wallJoins: scene.wallJoins.filter((j) => j.id !== id) }
+    case 'group': {
+      // Deleting a group deletes what it contains. A group is an isolation boundary — the whole
+      // point is that it behaves as ONE thing — so releasing its members here (the way deleting a
+      // boolean node releases its operands) would contradict every other verb's behaviour.
+      const group = scene.groups.find((g) => g.id === id)
+      if (!group) return scene
+      let next: SceneGraph = { ...scene, groups: scene.groups.filter((g) => g.id !== id) }
+      for (const memberId of group.memberIds) {
+        const member = findElement(next, memberId)
+        if (member) next = deleteElementInner(next, member, memberId)
+      }
+      return next
+    }
+    case 'planRegion':
+      return { ...scene, planRegions: scene.planRegions.filter((p) => p.id !== id) }
     case 'level': {
       const doomedWalls = scene.walls.filter((w) => w.levelId === id).map((w) => w.id)
       const doomedOpenings = scene.openings
         .filter((o) => doomedWalls.includes(o.hostId))
         .map((o) => o.id)
+      // The level's own views go with it, and so do their plan regions. Any OTHER view that
+      // merely referenced this level as its underlay just loses the underlay (C8) — the view
+      // itself is still perfectly valid without one.
+      const doomedViews = scene.views.filter((v) => v.levelId === id).map((v) => v.id)
       return {
         ...scene,
         levels: scene.levels.filter((l) => l.id !== id),
+        views: scene.views
+          .filter((v) => !doomedViews.includes(v.id))
+          .map((v) => (v.underlayLevelId === id ? { ...v, underlayLevelId: null } : v)),
+        planRegions: scene.planRegions.filter((p) => !doomedViews.includes(p.viewId)),
         walls: scene.walls.filter((w) => w.levelId !== id),
         openings: scene.openings.filter((o) => !doomedOpenings.includes(o.id)),
         fillings: scene.fillings.filter((f) => !doomedOpenings.includes(f.openingId)),
@@ -936,10 +1098,51 @@ export function deleteElement(scene: SceneGraph, id: string): SceneGraph {
         stairs: scene.stairs.filter((s) => s.levelId !== id),
         railings: scene.railings.filter((r) => r.levelId !== id),
         ceilings: scene.ceilings.filter((c) => c.levelId !== id),
+        curtainWalls: scene.curtainWalls.filter((c) => c.levelId !== id),
+        wallJoins: scene.wallJoins.filter((j) => j.levelId !== id),
+        // Groups lose the members that went with the level; one left holding fewer than two
+        // members is no longer an isolation boundary, so it dissolves — the same fixpoint rule
+        // `pruneBooleanOperand` applies to a boolean node left with too few operands.
+        groups: pruneGroups(
+          scene,
+          scene.groups.map((g) => ({
+            ...g,
+            memberIds: g.memberIds.filter((m) => levelIdOf(scene, m) !== id),
+          })),
+        ),
       }
     }
     default:
       return scene
+  }
+}
+
+/**
+ * Drop members that no longer exist and dissolve any group left with fewer than two, repeating
+ * until nothing changes — dissolving an inner group can leave its parent below two members too.
+ *
+ * Mirrors `pruneBooleanOperand`'s fixpoint loop exactly; both exist because a referencing node
+ * whose referents have gone is not a smaller node, it is a meaningless one. Returns the ORIGINAL
+ * array when nothing changed, so callers can use identity to skip a rebuild.
+ */
+function pruneGroups(scene: SceneGraph, groups: ElementGroup[]): ElementGroup[] {
+  let current = groups
+  for (;;) {
+    const alive = new Set(current.map((g) => g.id))
+    const next = current
+      .map((g) => ({
+        ...g,
+        memberIds: g.memberIds.filter(
+          (m) => alive.has(m) || findElement(scene, m) !== null,
+        ),
+      }))
+      .filter((g) => g.memberIds.length >= 2)
+
+    const unchanged =
+      next.length === current.length &&
+      next.every((g, i) => g.memberIds.length === current[i].memberIds.length)
+    if (unchanged) return current === groups ? groups : current
+    current = next
   }
 }
 
@@ -1029,6 +1232,22 @@ export function elementLabel(scene: SceneGraph, id: string): string {
     case 'ceiling': {
       const c = scene.ceilings.find((x) => x.id === id)!
       return typeName(c.typeId)
+    }
+    case 'curtainWall': {
+      const c = scene.curtainWalls.find((x) => x.id === id)!
+      return `${typeName(c.typeId)} · ${baselineLength(c.baseline).toFixed(2)}m`
+    }
+    case 'wallJoin': {
+      const j = scene.wallJoins.find((x) => x.id === id)!
+      return `${j.style === 'miter' ? 'Mitred' : 'Butt'} join (${j.memberIds.length})`
+    }
+    case 'group': {
+      const g = scene.groups.find((x) => x.id === id)!
+      return `${g.name} (${g.memberIds.length})`
+    }
+    case 'planRegion': {
+      const p = scene.planRegions.find((x) => x.id === id)!
+      return `${p.name} · cut ${p.viewRange.cutHeight.toFixed(2)}m`
     }
   }
 }
@@ -1324,5 +1543,99 @@ export function updateCeiling(scene: SceneGraph, id: string, patch: Partial<Ceil
   return {
     ...scene,
     ceilings: scene.ceilings.map((c) => (c.id === id ? { ...c, ...patch, id: c.id } : c)),
+  }
+}
+
+// ---- Wall joins (A9) --------------------------------------------------------
+
+export function addWallJoin(
+  scene: SceneGraph,
+  join: Omit<WallJoin, 'id'>,
+): { scene: SceneGraph; id: string } {
+  const id = newId('wj')
+  return { scene: { ...scene, wallJoins: [...scene.wallJoins, { ...join, id }] }, id }
+}
+
+export function updateWallJoin(
+  scene: SceneGraph,
+  id: string,
+  patch: Partial<WallJoin>,
+): SceneGraph {
+  return {
+    ...scene,
+    wallJoins: scene.wallJoins.map((j) => (j.id === id ? { ...j, ...patch, id: j.id } : j)),
+  }
+}
+
+// ---- Curtain walls (B4) -----------------------------------------------------
+
+export function addCurtainWall(
+  scene: SceneGraph,
+  spec: Omit<CurtainWall, 'id'>,
+): { scene: SceneGraph; id: string } {
+  const id = newId('cw')
+  return { scene: { ...scene, curtainWalls: [...scene.curtainWalls, { ...spec, id }] }, id }
+}
+
+export function updateCurtainWall(
+  scene: SceneGraph,
+  id: string,
+  patch: Partial<CurtainWall>,
+): SceneGraph {
+  return {
+    ...scene,
+    curtainWalls: scene.curtainWalls.map((c) => (c.id === id ? { ...c, ...patch, id: c.id } : c)),
+  }
+}
+
+// ---- Groups (D5) ------------------------------------------------------------
+
+export function addGroup(
+  scene: SceneGraph,
+  name: string,
+  memberIds: string[],
+): { scene: SceneGraph; id: string } {
+  const id = newId('grp')
+  return { scene: { ...scene, groups: [...scene.groups, { id, name, memberIds }] }, id }
+}
+
+export function updateGroup(
+  scene: SceneGraph,
+  id: string,
+  patch: Partial<ElementGroup>,
+): SceneGraph {
+  return {
+    ...scene,
+    groups: scene.groups.map((g) => (g.id === id ? { ...g, ...patch, id: g.id } : g)),
+  }
+}
+
+// ---- Plan regions (C7) ------------------------------------------------------
+
+export function addPlanRegion(
+  scene: SceneGraph,
+  region: Omit<PlanRegion, 'id'>,
+): { scene: SceneGraph; id: string } {
+  const id = newId('pr')
+  return { scene: { ...scene, planRegions: [...scene.planRegions, { ...region, id }] }, id }
+}
+
+export function updatePlanRegion(
+  scene: SceneGraph,
+  id: string,
+  patch: Partial<PlanRegion>,
+): SceneGraph {
+  return {
+    ...scene,
+    planRegions: scene.planRegions.map((p) => (p.id === id ? { ...p, ...patch, id: p.id } : p)),
+  }
+}
+
+// ---- Views (C7/C8) ----------------------------------------------------------
+
+export function updateView(scene: SceneGraph, id: string, patch: Partial<SavedView>): SceneGraph {
+  return {
+    ...scene,
+    views: scene.views.map((v) => (v.id === id ? { ...v, ...patch, id: v.id } : v)),
   }
 }

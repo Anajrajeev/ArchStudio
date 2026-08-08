@@ -12,6 +12,7 @@ import { useEditor, type Tool } from './scene/store'
 import { deleteElement } from './scene/mutations'
 import { commitActiveTool } from './editor/commit'
 import { isLoopTool, isPathTool } from './editor/tools'
+import { groupElements, ungroupElements } from './editor/groupVerbs'
 
 /** Single-key tool shortcuts, in the SketchUp/Blender style. */
 const TOOL_KEYS: Record<string, Tool> = {
@@ -105,6 +106,22 @@ function useKeyboardLayer(): void {
         s.redo()
         return
       }
+      // ---- Group / ungroup (D5). A Ctrl chord rather than a letter: A–Z were fully spoken for
+      // before this pass (D-025), and grouping is a modifier-flavoured action in every tool that
+      // has it.
+      if (mod && e.key.toLowerCase() === 'g') {
+        e.preventDefault()
+        const result = e.shiftKey
+          ? ungroupElements(s.scene, s.selectedIds)
+          : groupElements(s.scene, s.selectedIds)
+        if ('error' in result) {
+          s.flash(result.error, 'error')
+          return
+        }
+        s.commit(result.label, () => result.scene)
+        s.selectMany(result.selectAfter)
+        return
+      }
       if (mod) return // leave other browser shortcuts alone
 
       // ---- Repeat last operation (D7): Space, at rest — an in-progress pick or a typed number
@@ -166,6 +183,9 @@ function useKeyboardLayer(): void {
         e.preventDefault()
         if (s.toolPhase === 'collecting' || s.points.length > 0) s.cancelTool()
         else if (s.selectedIds.length > 0) s.select(null)
+        // Stepping out of a group (D5) comes AFTER clearing the selection, so one Escape never
+        // does two things at once — the same escalation the two branches above already follow.
+        else if (s.enteredGroupId) s.enterGroup(null)
         else s.setTool('select')
         return
       }

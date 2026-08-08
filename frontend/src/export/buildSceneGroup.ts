@@ -22,6 +22,11 @@ import {
 } from '../../../shared/geometry/index'
 import { triMeshToGeometry } from '../scene/geometryUtils'
 import { resolveRoof, isRoofError } from '../../../shared/geometry/roof'
+import { resolveWallJoins } from '../../../shared/geometry/wallJoin'
+import {
+  curtainWallSolidBoxes,
+  resolveCurtainWall,
+} from '../../../shared/geometry/curtainWall'
 import { resolveStair, stairSolidBoxes } from '../../../shared/geometry/stair'
 import { resolveRailing, railingSolidBoxes } from '../../../shared/geometry/railing'
 import {
@@ -64,10 +69,10 @@ function materialCache(): (color: string, opts?: { transparent?: boolean }) => T
 }
 
 function boxMesh(box: Box3D, material: THREE.Material, name: string): THREE.Mesh {
-  // Wall voiding (B1): a box cut to a roof plane has a sloped top a plain BoxGeometry cannot
-  // express. Built from the SAME boxCorners() every other consumer uses (the viewport, box-select),
-  // so the exported mesh cannot disagree with what is on screen.
-  if (box.topRamp) {
+  // A box whose faces are not all axis-aligned rectangles: a sloped top from roof voiding (B1) or
+  // a mitred end from a wall join (A9). Built from the SAME boxCorners() every other consumer uses
+  // (the viewport, box-select), so the exported mesh cannot disagree with what is on screen.
+  if (box.topRamp || box.endSkew) {
     const mesh = new THREE.Mesh(triMeshToGeometry(boxToTriMesh(box)), material)
     mesh.name = name
     return mesh
@@ -128,12 +133,24 @@ export function buildSceneGroup(scene: SceneGraph, csg?: CsgModule): THREE.Group
     return g
   }
 
-  // ---- Walls (openings cut out by box decomposition) ----
+  // ---- Walls (openings cut out by box decomposition, corners cleaned by joins) ----
+  // A9: resolved once per level, exactly as `viewport/Elements.tsx` does — same function, same
+  // input, so the exported corner is the corner on screen.
+  const joinsByLevel = new Map<string, ReturnType<typeof resolveWallJoins>>()
+  const joinFor = (levelId: string, wallId: string) => {
+    let m = joinsByLevel.get(levelId)
+    if (!m) {
+      m = resolveWallJoins(scene, levelId)
+      joinsByLevel.set(levelId, m)
+    }
+    return m.get(wallId)
+  }
+
   for (const wall of scene.walls) {
     const resolved = resolveWall(scene, wall)
     if (!resolved) continue
     const openings = scene.openings.filter((o) => o.hostId === wall.id)
-    const boxes = wallSolidBoxes(resolved, openings)
+    const boxes = wallSolidBoxes(resolved, openings, joinFor(wall.levelId, wall.id))
     const material = mat(materialColor(scene, resolved.material))
     const g = groupFor(wall.levelId)
     boxes.forEach((box, i) => g.add(boxMesh(box, material, `wall:${wall.id}:${i}`)))
@@ -359,6 +376,20 @@ export function buildSceneGroup(scene: SceneGraph, csg?: CsgModule): THREE.Group
     const material = mat(materialColor(scene, resolved.material))
     const g = groupFor(railing.levelId)
     boxes.forEach((box, i) => g.add(boxMesh(box, material, `railing:${railing.id}:${i}`)))
+  }
+
+  // ---- Curtain walls (B4) ----
+  // Framing and glazing come back already split by material, so the exported file has the same
+  // two-material structure the viewport draws — neither side re-derives which box is which.
+  for (const cw of scene.curtainWalls) {
+    const resolved = resolveCurtainWall(scene, cw)
+    if (!resolved) continue
+    const { frame, panels } = curtainWallSolidBoxes(resolved)
+    const g = groupFor(cw.levelId)
+    const frameMat = mat(materialColor(scene, resolved.type.mullionMaterial))
+    const panelMat = mat(materialColor(scene, resolved.type.panelMaterial), { transparent: true })
+    frame.forEach((box, i) => g.add(boxMesh(box, frameMat, `curtainwall:${cw.id}:mullion:${i}`)))
+    panels.forEach((box, i) => g.add(boxMesh(box, panelMat, `curtainwall:${cw.id}:panel:${i}`)))
   }
 
   return root

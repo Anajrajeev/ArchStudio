@@ -9,10 +9,12 @@ import {
   SCHEMA_VERSION,
   DEFAULT_MATERIALS,
   DEFAULT_TYPES,
+  planViewFor,
   type SceneGraph,
   type ElementTypeDef,
   type WallTypeDef,
   type Material,
+  type SavedView,
   type Vec2,
 } from './scene'
 
@@ -211,10 +213,27 @@ function migrateV1ToV2(v1: V1Scene): V2Scene {
 // v2 shape (frozen — do not edit; this is history)
 // ---------------------------------------------------------------------------
 
+/**
+ * Everything v9 added, so each older frozen shape can subtract it in one place. Each historical
+ * type below is expressed as the CURRENT `SceneGraph` minus everything introduced after it, so a
+ * new collection has to be excluded from every earlier version — this alias is what keeps that from
+ * being a nine-line edit in nine places every time the schema grows.
+ */
+type PostV8Keys = 'curtainWalls' | 'wallJoins' | 'groups' | 'planRegions'
+
+/**
+ * The `SavedView` shape as it stood from v3 to v8: an absolute `cutPlaneHeight` where v9 has a
+ * level-relative `viewRange` object, and no `underlayLevelId`.
+ */
+type V8SavedView = Omit<SavedView, 'viewRange' | 'underlayLevelId'> & {
+  cutPlaneHeight: number | null
+}
+
 /** A v2 document is identical to v3 minus the four documentation collections (and everything after). */
 type V2Scene = Omit<
   SceneGraph,
   | 'schemaVersion'
+  | PostV8Keys
   | 'views'
   | 'dimensions'
   | 'annotations'
@@ -236,6 +255,8 @@ type V2Scene = Omit<
 type V3Scene = Omit<
   SceneGraph,
   | 'schemaVersion'
+  | PostV8Keys
+  | 'views'
   | 'columnGrids'
   | 'roofs'
   | 'primitives'
@@ -243,7 +264,7 @@ type V3Scene = Omit<
   | 'stairs'
   | 'railings'
   | 'ceilings'
-> & { schemaVersion: 3 }
+> & { schemaVersion: 3; views: V8SavedView[] }
 
 // ---------------------------------------------------------------------------
 // v4 shape (frozen — do not edit; this is history)
@@ -252,10 +273,16 @@ type V3Scene = Omit<
 /** A v4 document is identical to v5 minus `roofs`. */
 type V4Scene = Omit<
   SceneGraph,
-  'schemaVersion' | 'roofs' | 'primitives' | 'booleans' | 'stairs' | 'railings' | 'ceilings'
-> & {
-  schemaVersion: 4
-}
+  | 'schemaVersion'
+  | PostV8Keys
+  | 'views'
+  | 'roofs'
+  | 'primitives'
+  | 'booleans'
+  | 'stairs'
+  | 'railings'
+  | 'ceilings'
+> & { schemaVersion: 4; views: V8SavedView[] }
 
 // ---------------------------------------------------------------------------
 // v5 shape (frozen — do not edit; this is history)
@@ -264,19 +291,25 @@ type V4Scene = Omit<
 /** A v5 document is identical to v6 minus `primitives` and `booleans`. */
 type V5Scene = Omit<
   SceneGraph,
-  'schemaVersion' | 'primitives' | 'booleans' | 'stairs' | 'railings' | 'ceilings'
-> & {
-  schemaVersion: 5
-}
+  | 'schemaVersion'
+  | PostV8Keys
+  | 'views'
+  | 'primitives'
+  | 'booleans'
+  | 'stairs'
+  | 'railings'
+  | 'ceilings'
+> & { schemaVersion: 5; views: V8SavedView[] }
 
 // ---------------------------------------------------------------------------
 // v6 shape (frozen — do not edit; this is history)
 // ---------------------------------------------------------------------------
 
 /** A v6 document is identical to v7 minus `stairs` and `railings`. */
-type V6Scene = Omit<SceneGraph, 'schemaVersion' | 'stairs' | 'railings' | 'ceilings'> & {
-  schemaVersion: 6
-}
+type V6Scene = Omit<
+  SceneGraph,
+  'schemaVersion' | PostV8Keys | 'views' | 'stairs' | 'railings' | 'ceilings'
+> & { schemaVersion: 6; views: V8SavedView[] }
 
 // ---------------------------------------------------------------------------
 // v7 shape (frozen — do not edit; this is history)
@@ -288,10 +321,27 @@ type V6Scene = Omit<SceneGraph, 'schemaVersion' | 'stairs' | 'railings' | 'ceili
  */
 type V7Slab = Omit<SceneGraph['slabs'][number], 'openings'>
 type V7Annotation = Omit<SceneGraph['annotations'][number], 'elevation' | 'slope'>
-type V7Scene = Omit<SceneGraph, 'schemaVersion' | 'ceilings' | 'slabs' | 'annotations'> & {
+type V7Scene = Omit<
+  SceneGraph,
+  'schemaVersion' | PostV8Keys | 'views' | 'ceilings' | 'slabs' | 'annotations'
+> & {
   schemaVersion: 7
+  views: V8SavedView[]
   slabs: V7Slab[]
   annotations: V7Annotation[]
+}
+
+// ---------------------------------------------------------------------------
+// v8 shape (frozen — do not edit; this is history)
+// ---------------------------------------------------------------------------
+
+/**
+ * A v8 document is identical to v9 minus `curtainWalls`/`wallJoins`/`groups`/`planRegions`, and
+ * with the OLD `SavedView` shape (see `V8SavedView` above).
+ */
+type V8Scene = Omit<SceneGraph, 'schemaVersion' | PostV8Keys | 'views'> & {
+  schemaVersion: 8
+  views: V8SavedView[]
 }
 
 // ---------------------------------------------------------------------------
@@ -402,7 +452,7 @@ function migrateV6ToV7(v6: V6Scene): V7Scene {
  *    for `text`/`label`/`leader`, which is exactly what null already means elsewhere in this schema
  *    for "not applicable to this variant".
  */
-function migrateV7ToV8(v7: V7Scene): SceneGraph {
+function migrateV7ToV8(v7: V7Scene): V8Scene {
   const existingIds = new Set(v7.types.map((t) => t.id))
   const missingTypes = DEFAULT_TYPES.filter(
     (t) => t.category === 'ceiling' && !existingIds.has(t.id),
@@ -410,11 +460,83 @@ function migrateV7ToV8(v7: V7Scene): SceneGraph {
 
   return {
     ...v7,
-    schemaVersion: SCHEMA_VERSION,
+    schemaVersion: 8,
     types: [...v7.types, ...missingTypes],
     slabs: v7.slabs.map((s) => ({ ...s, openings: [] })),
     annotations: v7.annotations.map((a) => ({ ...a, elevation: null, slope: null })),
     ceilings: [],
+  }
+}
+
+// ---------------------------------------------------------------------------
+// v8 → v9
+// ---------------------------------------------------------------------------
+
+/**
+ * v9 adds wall joins (A9/D-026), curtain walls (B4/D-027), groups (D5/D-028), and makes `views[]`
+ * live with a per-view vertical extent plus plan regions (C7/D-029) and an underlay (C8/D-030).
+ *
+ * Four collections start empty — no v8 document could express any of them, so no existing geometry
+ * changes — and the default CURTAIN WALL type is back-filled (skipping any id already taken), the
+ * same reasoning every prior additive migration in this file uses: without it a migrated project
+ * would open with the curtain-wall tool permanently refusing for want of a type.
+ *
+ * Two changes are NOT purely additive, and both are lossless rewrites rather than drops:
+ *
+ *  - **`SavedView.cutPlaneHeight` becomes `viewRange`.** Keeping both would mean two fields
+ *    describing the cut height, which is exactly the drift the TS/Python fixture lock exists to
+ *    prevent. The stored height carries across into `viewRange.cutHeight`; a view that had no cut
+ *    (`null`) was a 3D view and gets `viewRange: null`, which means the same thing. `cutPlaneHeight`
+ *    was measured in ABSOLUTE world Y while `viewRange` is relative to the view's level, so the
+ *    level's elevation is subtracted on the way through — a v8 view pinned to a level at 3 m with a
+ *    cut at 4.2 m becomes a 1.2 m cut height, describing the identical plane.
+ *  - **Every level gains a plan view** if it does not already have one. C7 derives the active view
+ *    from the active level, so a level without one would have no view range to edit; creating them
+ *    here rather than lazily keeps a camera toggle from having to commit a scene mutation.
+ */
+function migrateV8ToV9(v8: V8Scene): SceneGraph {
+  const existingIds = new Set(v8.types.map((t) => t.id))
+  const missingTypes = DEFAULT_TYPES.filter(
+    (t) => t.category === 'curtainWall' && !existingIds.has(t.id),
+  ).map((t) => ({ ...t }))
+
+  const levelElevation = (levelId: string | null): number =>
+    v8.levels.find((l) => l.id === levelId)?.elevation ?? 0
+
+  const views: SavedView[] = v8.views.map((v) => {
+    const { cutPlaneHeight, ...rest } = v
+    return {
+      ...rest,
+      viewRange:
+        cutPlaneHeight === null
+          ? null
+          : {
+              cutHeight: cutPlaneHeight - levelElevation(v.levelId),
+              topOffset:
+                v8.levels.find((l) => l.id === v.levelId)?.height ??
+                Math.max(cutPlaneHeight - levelElevation(v.levelId), 2.8),
+              bottomOffset: 0,
+              viewDepth: 0,
+            },
+      underlayLevelId: null,
+    }
+  })
+
+  // One plan view per level, for any level that does not already have one.
+  const covered = new Set(views.filter((v) => v.viewRange !== null).map((v) => v.levelId))
+  for (const level of v8.levels) {
+    if (!covered.has(level.id)) views.push(planViewFor(level))
+  }
+
+  return {
+    ...v8,
+    schemaVersion: SCHEMA_VERSION,
+    types: [...v8.types, ...missingTypes],
+    views,
+    planRegions: [],
+    curtainWalls: [],
+    wallJoins: [],
+    groups: [],
   }
 }
 
@@ -435,24 +557,33 @@ export function migrateScene(raw: unknown): SceneGraph {
   const version = (raw as { schemaVersion?: unknown }).schemaVersion
 
   if (version === 1) {
-    return migrateV7ToV8(
-      migrateV6ToV7(
-        migrateV5ToV6(migrateV4ToV5(migrateV3ToV4(migrateV2ToV3(migrateV1ToV2(raw as V1Scene))))),
+    return migrateV8ToV9(
+      migrateV7ToV8(
+        migrateV6ToV7(
+          migrateV5ToV6(migrateV4ToV5(migrateV3ToV4(migrateV2ToV3(migrateV1ToV2(raw as V1Scene))))),
+        ),
       ),
     )
   }
   if (version === 2) {
-    return migrateV7ToV8(
-      migrateV6ToV7(migrateV5ToV6(migrateV4ToV5(migrateV3ToV4(migrateV2ToV3(raw as V2Scene))))),
+    return migrateV8ToV9(
+      migrateV7ToV8(
+        migrateV6ToV7(migrateV5ToV6(migrateV4ToV5(migrateV3ToV4(migrateV2ToV3(raw as V2Scene))))),
+      ),
     )
   }
   if (version === 3) {
-    return migrateV7ToV8(migrateV6ToV7(migrateV5ToV6(migrateV4ToV5(migrateV3ToV4(raw as V3Scene)))))
+    return migrateV8ToV9(
+      migrateV7ToV8(migrateV6ToV7(migrateV5ToV6(migrateV4ToV5(migrateV3ToV4(raw as V3Scene))))),
+    )
   }
-  if (version === 4) return migrateV7ToV8(migrateV6ToV7(migrateV5ToV6(migrateV4ToV5(raw as V4Scene))))
-  if (version === 5) return migrateV7ToV8(migrateV6ToV7(migrateV5ToV6(raw as V5Scene)))
-  if (version === 6) return migrateV7ToV8(migrateV6ToV7(raw as V6Scene))
-  if (version === 7) return migrateV7ToV8(raw as V7Scene)
+  if (version === 4) {
+    return migrateV8ToV9(migrateV7ToV8(migrateV6ToV7(migrateV5ToV6(migrateV4ToV5(raw as V4Scene)))))
+  }
+  if (version === 5) return migrateV8ToV9(migrateV7ToV8(migrateV6ToV7(migrateV5ToV6(raw as V5Scene))))
+  if (version === 6) return migrateV8ToV9(migrateV7ToV8(migrateV6ToV7(raw as V6Scene)))
+  if (version === 7) return migrateV8ToV9(migrateV7ToV8(raw as V7Scene))
+  if (version === 8) return migrateV8ToV9(raw as V8Scene)
   if (version === SCHEMA_VERSION) return raw as SceneGraph
 
   if (typeof version === 'number' && version > SCHEMA_VERSION) {

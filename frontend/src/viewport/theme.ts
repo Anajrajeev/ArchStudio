@@ -17,6 +17,8 @@ export interface CanvasTheme {
   gridMinorPlan: string
   gridMajorPlan: string
   planInk: string
+  /** C8: the single flat ink an underlaid level is drawn in. */
+  underlay: string
   select: string
   selectActive: string
   prehighlight: string
@@ -38,6 +40,7 @@ const FALLBACK: CanvasTheme = {
   gridMinorPlan: '#c9c9c9',
   gridMajorPlan: '#a8a8a8',
   planInk: '#1c1c1c',
+  underlay: '#6f7d8c',
   select: '#ff8000',
   selectActive: '#ffa028',
   prehighlight: '#ffc685',
@@ -60,6 +63,7 @@ const VAR_MAP: Record<keyof CanvasTheme, string> = {
   gridMinorPlan: '--grid-minor-plan',
   gridMajorPlan: '--grid-major-plan',
   planInk: '--plan-ink',
+  underlay: '--underlay-ink',
   select: '--p-select',
   selectActive: '--p-select-active',
   prehighlight: '--p-prehighlight',
