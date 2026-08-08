@@ -35,6 +35,13 @@ import {
   IconPrimitive,
   IconStair,
   IconRailing,
+  IconCeiling,
+  IconSlabSolid,
+  IconSlabOpening,
+  IconSpot,
+  IconSpotElevation,
+  IconSpotCoordinate,
+  IconSpotSlope,
 } from './Icons'
 
 interface ToolDef {
@@ -54,6 +61,7 @@ const GROUPS: ToolDef[][] = [
     { tool: 'roof', icon: <IconRoof />, shortcut: 'U', category: 'roof' },
     { tool: 'stair', icon: <IconStair />, shortcut: 'H', category: 'stair' },
     { tool: 'railing', icon: <IconRailing />, shortcut: 'J', category: 'railing' },
+    { tool: 'ceiling', icon: <IconCeiling />, shortcut: 'Q', category: 'ceiling' },
   ],
   [
     { tool: 'door', icon: <IconDoor />, shortcut: 'D', category: 'door' },
@@ -79,12 +87,15 @@ const GROUPS: ToolDef[][] = [
     { tool: 'roomtag', icon: <IconRoomTag />, shortcut: 'G' },
     { tool: 'text', icon: <IconText />, shortcut: 'X' },
     { tool: 'leader', icon: <IconLeader />, shortcut: 'L' },
+    { tool: 'spot', icon: <IconSpot />, shortcut: 'Z' },
   ],
 ]
 
 const OFFSET_PRESETS = [0.1, 0.2, 0.5, 1, 1.2, 2, 3]
 
 const GRID_SIZES = [0.05, 0.1, 0.25, 0.5, 1]
+
+const ANGLE_INCREMENTS = [15, 22.5, 30, 45, 90]
 
 export default function ToolRibbon() {
   const { t } = useTranslation()
@@ -94,6 +105,8 @@ export default function ToolRibbon() {
   const toggleGrid = useEditor((s) => s.toggleGrid)
   const gridSize = useEditor((s) => s.gridSize)
   const setGridSize = useEditor((s) => s.setGridSize)
+  const angleIncrement = useEditor((s) => s.angleIncrement)
+  const setAngleIncrement = useEditor((s) => s.setAngleIncrement)
 
   const activeDef = GROUPS.flat().find((d) => d.tool === tool)
 
@@ -143,6 +156,22 @@ export default function ToolRibbon() {
         </>
       )}
 
+      {/* New solid vs. cutting an opening in an existing one, only while slab is active (B8). */}
+      {tool === 'slab' && (
+        <>
+          <div className="divider" style={{ width: 1, height: 18, flex: 'none' }} />
+          <SlabModeToggle />
+        </>
+      )}
+
+      {/* Which readout the spot tool places, only while it is active (C4). */}
+      {tool === 'spot' && (
+        <>
+          <div className="divider" style={{ width: 1, height: 18, flex: 'none' }} />
+          <SpotModeToggle />
+        </>
+      )}
+
       {/* The offset tool needs a distance before it can do anything useful. */}
       {tool === 'offset' && (
         <>
@@ -175,6 +204,19 @@ export default function ToolRibbon() {
           </option>
         ))}
       </select>
+      <select
+        className="select"
+        style={{ width: 82 }}
+        value={angleIncrement}
+        onChange={(e) => setAngleIncrement(Number(e.target.value))}
+        aria-label={t('editor.angleIncrement')}
+      >
+        {ANGLE_INCREMENTS.map((a) => (
+          <option key={a} value={a}>
+            {a}°
+          </option>
+        ))}
+      </select>
     </div>
   )
 }
@@ -203,6 +245,68 @@ function WallModeToggle() {
           onClick={() => setWallMode(m.mode)}
           aria-label={t(m.key)}
           aria-pressed={wallMode === m.mode}
+        >
+          {m.icon}
+        </button>
+      ))}
+    </div>
+  )
+}
+
+/**
+ * New solid vs. cutting an opening in an existing one (B8). `A` toggles it, exactly like the wall
+ * tool's own line/arc toggle — the two never conflict since only one tool is ever active.
+ */
+function SlabModeToggle() {
+  const { t } = useTranslation()
+  const slabMode = useEditor((s) => s.slabMode)
+  const setSlabMode = useEditor((s) => s.setSlabMode)
+
+  const modes = [
+    { mode: 'solid' as const, icon: <IconSlabSolid />, key: 'editor.slabMode.solid' },
+    { mode: 'opening' as const, icon: <IconSlabOpening />, key: 'editor.slabMode.opening' },
+  ]
+
+  return (
+    <div style={{ display: 'flex', gap: 2 }} role="group" aria-label={t('editor.slabMode.label')}>
+      {modes.map((m) => (
+        <button
+          key={m.mode}
+          className={`icon-btn tip ${slabMode === m.mode ? 'icon-btn--active' : ''}`}
+          data-tip={`${t(m.key)} (A)`}
+          onClick={() => setSlabMode(m.mode)}
+          aria-label={t(m.key)}
+          aria-pressed={slabMode === m.mode}
+        >
+          {m.icon}
+        </button>
+      ))}
+    </div>
+  )
+}
+
+/** Which readout the spot tool places at the picked point (C4). */
+function SpotModeToggle() {
+  const { t } = useTranslation()
+  const activeSpotMode = useEditor((s) => s.activeSpotMode)
+  const setSpotMode = useEditor((s) => s.setSpotMode)
+
+  const modes = [
+    { mode: 'elevation' as const, icon: <IconSpotElevation />, key: 'editor.spotMode.elevation' },
+    { mode: 'coordinate' as const, icon: <IconSpotCoordinate />, key: 'editor.spotMode.coordinate' },
+    { mode: 'slope' as const, icon: <IconSpotSlope />, key: 'editor.spotMode.slope' },
+  ]
+
+  return (
+    <div style={{ display: 'flex', gap: 2 }} role="group" aria-label={t('editor.spotMode.label')}>
+      {modes.map((m) => (
+        <button
+          key={m.mode}
+          className={`icon-btn tip ${activeSpotMode === m.mode ? 'icon-btn--active' : ''}`}
+          data-tip={t(m.key)}
+          onClick={() => setSpotMode(m.mode)}
+          aria-label={t(m.key)}
+          aria-pressed={activeSpotMode === m.mode}
         >
           {m.icon}
         </button>
@@ -267,6 +371,8 @@ function TypeSelector({ category }: { category: TypeCategory }) {
         return s.activeStairTypeId
       case 'railing':
         return s.activeRailingTypeId
+      case 'ceiling':
+        return s.activeCeilingTypeId
       default:
         return ''
     }

@@ -35,6 +35,7 @@ import {
   type BooleanOp,
   type Stair,
   type Railing,
+  type Ceiling,
 } from '../../../shared/types/scene'
 import { resolveWall, baselineLength } from '../../../shared/geometry/index'
 import { booleanOpLabel } from '../../../shared/geometry/booleanTree'
@@ -65,6 +66,7 @@ export type ElementKind =
   | 'boolean'
   | 'stair'
   | 'railing'
+  | 'ceiling'
 
 export interface SelectedElement {
   kind: ElementKind
@@ -90,6 +92,7 @@ export function findElement(scene: SceneGraph, id: string): SelectedElement | nu
   if (scene.booleans.some((b) => b.id === id)) return { kind: 'boolean', id }
   if (scene.stairs.some((s) => s.id === id)) return { kind: 'stair', id }
   if (scene.railings.some((r) => r.id === id)) return { kind: 'railing', id }
+  if (scene.ceilings.some((c) => c.id === id)) return { kind: 'ceiling', id }
   if (scene.levels.some((l) => l.id === id)) return { kind: 'level', id }
   return null
 }
@@ -120,6 +123,8 @@ export function levelIdOf(scene: SceneGraph, id: string): string | null {
   if (stair) return stair.levelId
   const railing = scene.railings.find((r) => r.id === id)
   if (railing) return railing.levelId
+  const ceiling = scene.ceilings.find((c) => c.id === id)
+  if (ceiling) return ceiling.levelId
   const opening = scene.openings.find((o) => o.id === id)
   if (opening) return levelIdOf(scene, opening.hostId)
   const filling = scene.fillings.find((f) => f.id === id)
@@ -381,7 +386,7 @@ export function addSlab(
   typeId: string,
   boundary: Vec2[],
 ): { scene: SceneGraph; id: string } {
-  const slab: Slab = { id: newId('sl'), typeId, levelId, boundary, heightOffset: 0 }
+  const slab: Slab = { id: newId('sl'), typeId, levelId, boundary, heightOffset: 0, openings: [] }
   return { scene: { ...scene, slabs: [...scene.slabs, slab] }, id: slab.id }
 }
 
@@ -390,6 +395,22 @@ export function updateSlab(scene: SceneGraph, id: string, patch: Partial<Slab>):
     ...scene,
     slabs: scene.slabs.map((s) => (s.id === id ? { ...s, ...patch, id: s.id } : s)),
   }
+}
+
+// ---------------------------------------------------------------------------
+// Slab openings / shafts (B8)
+// ---------------------------------------------------------------------------
+
+export function addSlabOpening(scene: SceneGraph, slabId: string, polygon: Vec2[]): SceneGraph {
+  const slab = scene.slabs.find((s) => s.id === slabId)
+  if (!slab) return scene
+  return updateSlab(scene, slabId, { openings: [...slab.openings, polygon] })
+}
+
+export function removeSlabOpening(scene: SceneGraph, slabId: string, index: number): SceneGraph {
+  const slab = scene.slabs.find((s) => s.id === slabId)
+  if (!slab) return scene
+  return updateSlab(scene, slabId, { openings: slab.openings.filter((_, i) => i !== index) })
 }
 
 export function addColumn(
@@ -567,6 +588,10 @@ export function moveElement(scene: SceneGraph, id: string, delta: Vec2): SceneGr
       const r = scene.railings.find((x) => x.id === id)!
       return updateRailing(scene, id, { path: r.path.map((p) => shift(p, dx, dy)) })
     }
+    case 'ceiling': {
+      const c = scene.ceilings.find((x) => x.id === id)!
+      return updateCeiling(scene, id, { boundary: c.boundary.map((p) => shift(p, dx, dy)) })
+    }
     case 'opening':
     case 'filling': {
       // An opening is hosted — dragging it slides it along the wall rather than off it.
@@ -664,6 +689,10 @@ export function transformElement(scene: SceneGraph, id: string, xf: Transform2D)
     case 'railing': {
       const r = scene.railings.find((x) => x.id === id)!
       return updateRailing(scene, id, { path: r.path.map(p) })
+    }
+    case 'ceiling': {
+      const c = scene.ceilings.find((x) => x.id === id)!
+      return updateCeiling(scene, id, { boundary: c.boundary.map(p) })
     }
     default:
       return scene
@@ -769,6 +798,15 @@ export function duplicateElement(
       const copy: Railing = { ...r, id: newId('rl'), path: r.path.map((p) => [...p] as Vec2) }
       return { scene: { ...scene, railings: [...scene.railings, copy] }, id: copy.id }
     }
+    case 'ceiling': {
+      const c = scene.ceilings.find((x) => x.id === id)!
+      const copy: Ceiling = {
+        ...c,
+        id: newId('ceil'),
+        boundary: c.boundary.map((p) => [...p] as Vec2),
+      }
+      return { scene: { ...scene, ceilings: [...scene.ceilings, copy] }, id: copy.id }
+    }
     default:
       return null
   }
@@ -795,6 +833,8 @@ export function setElementType(scene: SceneGraph, id: string, typeId: string): S
       return updateStair(scene, id, { typeId })
     case 'railing':
       return updateRailing(scene, id, { typeId })
+    case 'ceiling':
+      return updateCeiling(scene, id, { typeId })
     case 'filling':
       return syncOpeningToFilling(updateFilling(scene, id, { typeId }), id)
     default:
@@ -871,6 +911,8 @@ export function deleteElement(scene: SceneGraph, id: string): SceneGraph {
       return { ...scene, stairs: scene.stairs.filter((s) => s.id !== id) }
     case 'railing':
       return { ...scene, railings: scene.railings.filter((r) => r.id !== id) }
+    case 'ceiling':
+      return { ...scene, ceilings: scene.ceilings.filter((c) => c.id !== id) }
     case 'level': {
       const doomedWalls = scene.walls.filter((w) => w.levelId === id).map((w) => w.id)
       const doomedOpenings = scene.openings
@@ -893,6 +935,7 @@ export function deleteElement(scene: SceneGraph, id: string): SceneGraph {
         booleans: scene.booleans.filter((b) => b.levelId !== id),
         stairs: scene.stairs.filter((s) => s.levelId !== id),
         railings: scene.railings.filter((r) => r.levelId !== id),
+        ceilings: scene.ceilings.filter((c) => c.levelId !== id),
       }
     }
     default:
@@ -945,7 +988,14 @@ export function elementLabel(scene: SceneGraph, id: string): string {
     }
     case 'annotation': {
       const a = scene.annotations.find((x) => x.id === id)!
-      return a.text || 'Annotation'
+      if (a.text) return a.text
+      // Spot kinds (C4) never carry hand-typed text — fall back to a name rather than "Annotation".
+      const SPOT_NAMES: Partial<Record<typeof a.kind, string>> = {
+        'spot-elevation': 'Spot elevation',
+        'spot-coordinate': 'Spot coordinate',
+        'spot-slope': 'Spot slope',
+      }
+      return SPOT_NAMES[a.kind] ?? 'Annotation'
     }
     case 'roomTag': {
       const t = scene.roomTags.find((x) => x.id === id)!
@@ -975,6 +1025,10 @@ export function elementLabel(scene: SceneGraph, id: string): string {
     case 'railing': {
       const r = scene.railings.find((x) => x.id === id)!
       return `${typeName(r.typeId)} · ${r.path.length} pts`
+    }
+    case 'ceiling': {
+      const c = scene.ceilings.find((x) => x.id === id)!
+      return typeName(c.typeId)
     }
   }
 }
@@ -1251,5 +1305,24 @@ export function updateRailing(scene: SceneGraph, id: string, patch: Partial<Rail
   return {
     ...scene,
     railings: scene.railings.map((r) => (r.id === id ? { ...r, ...patch, id: r.id } : r)),
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Ceilings (B5)
+// ---------------------------------------------------------------------------
+
+export function addCeiling(scene: SceneGraph, ceiling: Ceiling): SceneGraph {
+  return { ...scene, ceilings: [...scene.ceilings, ceiling] }
+}
+
+export function removeCeiling(scene: SceneGraph, id: string): SceneGraph {
+  return { ...scene, ceilings: scene.ceilings.filter((c) => c.id !== id) }
+}
+
+export function updateCeiling(scene: SceneGraph, id: string, patch: Partial<Ceiling>): SceneGraph {
+  return {
+    ...scene,
+    ceilings: scene.ceilings.map((c) => (c.id === id ? { ...c, ...patch, id: c.id } : c)),
   }
 }

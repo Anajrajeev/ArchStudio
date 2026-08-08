@@ -245,6 +245,66 @@ export const IconBoolean = (p: IconProps) => (
   </Svg>
 )
 
+/** A ceiling (B5): the same isometric plate as `IconSlab`, but hatched to read as the underside. */
+export const IconCeiling = (p: IconProps) => (
+  <SvgFill {...p}>
+    <path d="M8 2l6.5 3.4L8 8.8 1.5 5.4z" opacity="0.5" />
+    <path d="M3.6 5.1l3 1.6M5.6 4l3 1.6M7.6 2.9l3 1.6" stroke="currentColor" strokeWidth="1" fill="none" />
+    <path d="M1.5 7.6L8 11v3L1.5 10.6z" opacity="0.3" />
+    <path d="M14.5 7.6L8 11v3l6.5-3.4z" opacity="0.45" />
+  </SvgFill>
+)
+
+/** A slab boundary with a solid fill — the `solid` mode of the slab tool (B8). */
+export const IconSlabSolid = (p: IconProps) => (
+  <SvgFill {...p}>
+    <rect x="1.5" y="1.5" width="13" height="13" rx="0.6" />
+  </SvgFill>
+)
+
+/** A slab boundary with a hole punched through it — the `opening` mode of the slab tool (B8). */
+export const IconSlabOpening = (p: IconProps) => (
+  <SvgFill {...p}>
+    <path
+      fillRule="evenodd"
+      d="M1.5 1.5h13v13h-13zM6 6h4v4H6z"
+    />
+  </SvgFill>
+)
+
+/** A spot readout: a map pin, the universal "value at this point" glyph. */
+export const IconSpot = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M8 1.5c-2.8 0-5 2.1-5 4.9C3 9.9 8 14.5 8 14.5s5-4.6 5-8.1c0-2.8-2.2-4.9-5-4.9z" />
+    <circle cx="8" cy="6.3" r="1.5" />
+  </Svg>
+)
+
+/** Spot elevation: an architectural datum mark — a filled triangle on a baseline. */
+export const IconSpotElevation = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M2 13h12" />
+    <path d="M8 2l3 5H5z" fill="currentColor" stroke="none" />
+  </Svg>
+)
+
+/** Spot coordinate: a crosshair over the picked point. */
+export const IconSpotCoordinate = (p: IconProps) => (
+  <Svg {...p}>
+    <circle cx="8" cy="8" r="4" />
+    <path d="M8 1v3M8 12v3M1 8h3M12 8h3" />
+  </Svg>
+)
+
+/** Spot slope: a rising ramp with a grade angle marked at its base. */
+export const IconSpotSlope = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M2 13L13 4" />
+    <path d="M2 13h11" />
+    <path d="M4.3 13a4 4 0 0 1 1.3-2.6" />
+  </Svg>
+)
+
 // ---- Actions (stroke) ------------------------------------------------------
 
 export const IconUndo = (p: IconProps) => (

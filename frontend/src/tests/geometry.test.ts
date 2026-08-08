@@ -27,6 +27,7 @@ import {
   validateWall,
   validateOpening,
   validateRoomPolygon,
+  validateSlab,
   roomArea,
   rotationYFor,
   type Box3D,
@@ -34,7 +35,17 @@ import {
 import { defaultRoof } from '../../../shared/geometry/roof'
 import { meshVolume, isWatertight } from '../../../shared/geometry/primitives'
 import { assemblyThickness, type Vec2 } from '../../../shared/types/scene'
-import { addSlab, addColumn, addBeam, addWall, addRoof, updateWall, updateOpening } from '../scene/mutations'
+import {
+  addSlab,
+  addColumn,
+  addBeam,
+  addWall,
+  addRoof,
+  updateWall,
+  updateOpening,
+  addSlabOpening,
+  removeSlabOpening,
+} from '../scene/mutations'
 import { fixture, withWall, withDoor } from './helpers'
 
 /** A wall on levelId sitting exactly on a roof's own eave line — B1 wall voiding fixture. */
@@ -504,6 +515,91 @@ describe('slabs, columns and beams', () => {
       [1, 0],
     ])
     expect(resolveSlab(r.scene, r.scene.slabs[0])).toBeNull()
+  })
+
+  it('defaults to no openings', () => {
+    const f = fixture()
+    const r = addSlab(f.scene, f.levelId, 'st-floor-200', [
+      [0, 0],
+      [4, 0],
+      [4, 3],
+      [0, 3],
+    ])
+    expect(r.scene.slabs[0].openings).toEqual([])
+    expect(resolveSlab(r.scene, r.scene.slabs[0])!.openings).toEqual([])
+  })
+
+  it('addSlabOpening/removeSlabOpening manage the openings array (B8)', () => {
+    const f = fixture()
+    const r = addSlab(f.scene, f.levelId, 'st-floor-200', [
+      [0, 0],
+      [4, 0],
+      [4, 3],
+      [0, 3],
+    ])
+    const shaft: Vec2[] = [
+      [1, 1],
+      [2, 1],
+      [2, 2],
+      [1, 2],
+    ]
+    const withOpening = addSlabOpening(r.scene, r.id, shaft)
+    expect(withOpening.slabs[0].openings).toEqual([shaft])
+    expect(resolveSlab(withOpening, withOpening.slabs[0])!.openings).toEqual([shaft])
+
+    const withoutOpening = removeSlabOpening(withOpening, r.id, 0)
+    expect(withoutOpening.slabs[0].openings).toEqual([])
+  })
+
+  it('validateSlab accepts an opening fully inside the boundary', () => {
+    const f = fixture()
+    const r = addSlab(f.scene, f.levelId, 'st-floor-200', [
+      [0, 0],
+      [4, 0],
+      [4, 3],
+      [0, 3],
+    ])
+    const withOpening = addSlabOpening(r.scene, r.id, [
+      [1, 1],
+      [2, 1],
+      [2, 2],
+      [1, 2],
+    ])
+    expect(validateSlab(withOpening, withOpening.slabs[0])).toEqual([])
+  })
+
+  it('validateSlab flags an opening that extends outside the boundary', () => {
+    const f = fixture()
+    const r = addSlab(f.scene, f.levelId, 'st-floor-200', [
+      [0, 0],
+      [4, 0],
+      [4, 3],
+      [0, 3],
+    ])
+    const withOpening = addSlabOpening(r.scene, r.id, [
+      [3, 2],
+      [5, 2],
+      [5, 3.5],
+      [3, 3.5],
+    ])
+    expect(
+      validateSlab(withOpening, withOpening.slabs[0]).some((e) => /outside the slab boundary/i.test(e)),
+    ).toBe(true)
+  })
+
+  it('validateSlab flags a degenerate (zero-area) opening', () => {
+    const f = fixture()
+    const r = addSlab(f.scene, f.levelId, 'st-floor-200', [
+      [0, 0],
+      [4, 0],
+      [4, 3],
+      [0, 3],
+    ])
+    const withOpening = addSlabOpening(r.scene, r.id, [
+      [1, 1],
+      [1, 1],
+    ])
+    expect(validateSlab(withOpening, withOpening.slabs[0]).length).toBeGreaterThan(0)
   })
 
   it('builds a column solid spanning its level height', () => {

@@ -71,6 +71,11 @@ export type Tool =
   // Railing (B3): an OPEN polyline — collects points like slab/room but never closes on the
   // first point, since a railing is a path, not a boundary. Finished with Enter.
   | 'railing'
+  // Ceiling (B5): a closed boundary loop like slab/room, anchored at its bottom face.
+  | 'ceiling'
+  // Spot annotation (C4): one click reads elevation, coordinate, or roof slope at the point,
+  // depending on `activeSpotMode` — one tool with a ribbon mode switch, like the wall's line/arc.
+  | 'spot'
 
 /**
  * How the wall tool interprets its points. `arc` collects a third point the wall must pass
@@ -78,6 +83,17 @@ export type Tool =
  * geometry and renderers; this is the tool that finally draws one.
  */
 export type WallMode = 'line' | 'arc'
+
+/**
+ * How the slab tool interprets a closed loop (B8). `opening` reuses the exact same loop-closing
+ * gesture as `solid`, but hands the finished polygon to whichever existing slab (on the active
+ * level) contains it as an inner-loop cut, rather than creating a new slab — the same "one tool,
+ * a ribbon mode switch" shape as `WallMode`.
+ */
+export type SlabMode = 'solid' | 'opening'
+
+/** Which readout the spot annotation tool places at the picked point (C4). */
+export type SpotMode = 'elevation' | 'coordinate' | 'slope'
 
 /** How many points each tool collects before it can commit. 0 = unbounded (closed loop). */
 export const TOOL_POINTS: Record<Tool, number> = {
@@ -104,6 +120,8 @@ export const TOOL_POINTS: Record<Tool, number> = {
   primitive: 1,
   stair: 2,
   railing: 0, // unbounded — an open path, finished with Enter (min 2 points), not by closing
+  ceiling: 0, // unbounded — a closed loop, exactly like slab/room
+  spot: 1,
 }
 
 export type ToolPhase = 'idle' | 'collecting'
@@ -164,11 +182,23 @@ export interface EditorState {
   // --- tool state machine
   tool: Tool
   toolPhase: ToolPhase
+  /**
+   * The last tool a TYPED placement (one with an active type — wall/slab/door/window/column/
+   * beam/roof/primitive/stair/railing/ceiling) was committed on (D7). `repeatLastOperation`
+   * switches back to it; since every type/parameter selector is its own persistent field rather
+   * than being reset on tool switch, switching tools already restores "same type + parameters"
+   * for free.
+   */
+  lastPlacementTool: Tool | null
   /** Points collected by the in-progress operation, in scene 2D. */
   points: Vec2[]
   numeric: NumericEntry
   axisLock: AxisLock
   wallMode: WallMode
+  /** Solid vs. opening loop for the slab tool (B8). */
+  slabMode: SlabMode
+  /** Which readout the spot tool places (C4). */
+  activeSpotMode: SpotMode
   /** First pick of a two-element verb (trim/extend): the boundary wall. */
   pendingRefId: string | null
   /** Distance the offset tool uses; sign comes from which side of the wall was clicked. */
@@ -190,12 +220,19 @@ export interface EditorState {
   activePrimitiveTypeId: string
   activeStairTypeId: string
   activeRailingTypeId: string
+  activeCeilingTypeId: string
 
   // --- pointer / snapping
   snap: SnapResult | null
   cursorWorld: Vec3 | null
   snapToggles: SnapToggles
   gridSize: number
+  /** Polar/axis snap angle increment in degrees. */
+  angleIncrement: number
+  /** In-range snap candidates for the current cursor (Tab-cycling, A6). */
+  snapCandidates: Array<{ point: Vec2; type: SnapType | null; label: string | null; sourceId?: string }> | null
+  /** Index of the currently selected snap candidate (0 = the winner). */
+  snapCandidateIndex: number
   /** Element the plane would jump to if the user clicked now (Dynamic UCS candidate). */
   hoverPlaneElementId: string | null
 
@@ -225,6 +262,10 @@ export interface EditorState {
   // ==== actions ====
   setTool: (tool: Tool) => void
   setWallMode: (mode: WallMode) => void
+  setSlabMode: (mode: SlabMode) => void
+  setSpotMode: (mode: SpotMode) => void
+  notePlacement: (tool: Tool) => void
+  repeatLastOperation: () => void
   setPendingRef: (id: string | null) => void
   setOffsetDistance: (d: number) => void
   setActiveLevel: (id: string) => void
@@ -259,6 +300,9 @@ export interface EditorState {
   setSnap: (snap: SnapResult | null, world: Vec3 | null) => void
   toggleSnapType: (t: SnapType) => void
   setGridSize: (n: number) => void
+  setAngleIncrement: (n: number) => void
+  setSnapCandidates: (candidates: EditorState['snapCandidates']) => void
+  cycleSnapCandidate: () => void
 
   // selection
   select: (id: string | null, additive?: boolean) => void
@@ -324,10 +368,13 @@ export const useEditor = create<EditorState>((set, get) => ({
 
   tool: 'select',
   toolPhase: 'idle',
+  lastPlacementTool: null,
   points: [],
   numeric: emptyNumericEntry,
   axisLock: 'none',
   wallMode: 'line',
+  slabMode: 'solid',
+  activeSpotMode: 'elevation',
   pendingRefId: null,
   offsetDistance: 1,
   pendingDimRefs: [],
@@ -341,11 +388,15 @@ export const useEditor = create<EditorState>((set, get) => ({
   activePrimitiveTypeId: 'pt-box',
   activeStairTypeId: 'st-stair-280',
   activeRailingTypeId: 'rl-standard',
+  activeCeilingTypeId: 'clt-plaster-15',
 
   snap: null,
   cursorWorld: null,
   snapToggles: { ...DEFAULT_SNAP_TOGGLES },
   gridSize: 0.25,
+  angleIncrement: 45,
+  snapCandidates: null,
+  snapCandidateIndex: 0,
   hoverPlaneElementId: null,
 
   selectedIds: [],
@@ -383,6 +434,27 @@ export const useEditor = create<EditorState>((set, get) => ({
   /** Switching line/arc mid-gesture discards the collected points — the point *count* changes. */
   setWallMode: (wallMode) =>
     set({ wallMode, points: [], toolPhase: 'idle', numeric: emptyNumericEntry, axisLock: 'none' }),
+
+  /** Switching solid/opening mid-loop discards the collected points, same reasoning as wall mode. */
+  setSlabMode: (slabMode) =>
+    set({ slabMode, points: [], toolPhase: 'idle', numeric: emptyNumericEntry, axisLock: 'none' }),
+
+  setSpotMode: (activeSpotMode) => set({ activeSpotMode }),
+
+  /** Remember the tool a typed placement just committed on (D7). */
+  notePlacement: (tool) => set({ lastPlacementTool: tool }),
+
+  /**
+   * Switch back to the last tool a typed placement was committed on, ready to place another
+   * instance immediately (D7). Its active type and every other parameter are already live in
+   * their own persistent fields — switching tools is all that is needed to "repeat" it.
+   */
+  repeatLastOperation: () => {
+    const s = get()
+    if (!s.lastPlacementTool) return
+    s.setTool(s.lastPlacementTool)
+    s.flash(`Repeat: ${s.lastPlacementTool}`)
+  },
 
   setActiveLevel: (id) => {
     const level = findLevel(get().scene, id)
@@ -431,6 +503,9 @@ export const useEditor = create<EditorState>((set, get) => ({
         break
       case 'railing':
         set({ activeRailingTypeId: typeId })
+        break
+      case 'ceiling':
+        set({ activeCeilingTypeId: typeId })
         break
     }
   },
@@ -626,6 +701,29 @@ export const useEditor = create<EditorState>((set, get) => ({
     set({ snapToggles: { ...get().snapToggles, [t]: !get().snapToggles[t] } }),
 
   setGridSize: (gridSize) => set({ gridSize }),
+
+  setAngleIncrement: (angleIncrement) => set({ angleIncrement }),
+
+  /** Set the snap candidates and reset the selected index. Called when the cursor moves. */
+  setSnapCandidates: (candidates) => set({ snapCandidates: candidates, snapCandidateIndex: 0 }),
+
+  /** Cycle to the next snap candidate (Tab key, A6). */
+  cycleSnapCandidate: () => {
+    const s = get()
+    if (!s.snapCandidates || s.snapCandidates.length === 0) return
+    const nextIndex = (s.snapCandidateIndex + 1) % s.snapCandidates.length
+    const candidate = s.snapCandidates[nextIndex]
+    set({
+      snapCandidateIndex: nextIndex,
+      snap: {
+        point: candidate.point,
+        type: candidate.type,
+        label: candidate.label,
+        sourceId: candidate.sourceId,
+        snapped: candidate.type !== null,
+      },
+    })
+  },
 
   // ---- selection ----
 

@@ -10,6 +10,7 @@ import {
   findPrimitiveType,
   findStairType,
   findRailingType,
+  findCeilingType,
   type Baseline,
   type SceneGraph,
   type Vec2,
@@ -23,6 +24,8 @@ import {
   bulgeThroughPoint,
   perpendicular,
   resolveWall,
+  polygonCentroid,
+  pointInPolygon,
 } from '../../../shared/geometry/index'
 import { rectangleFrame, defaultRoof } from '../../../shared/geometry/roof'
 import {
@@ -43,6 +46,8 @@ import {
   addPrimitive,
   addStair,
   addRailing,
+  addSlabOpening,
+  addCeiling,
 } from '../scene/mutations'
 import { defaultStair } from '../../../shared/geometry/stair'
 import { defaultRailing } from '../../../shared/geometry/railing'
@@ -120,6 +125,13 @@ export function toolHint(tool: Tool, pointCount: number, wallMode: WallMode = 'l
             prompt: 'Click more vertices, or click the first point to close',
             modifiers: 'Enter close · Backspace undo point · Esc cancel',
           }
+    case 'ceiling':
+      return pointCount < 3
+        ? { prompt: `Click ceiling boundary vertices (${pointCount}/3 minimum)`, modifiers: 'Esc cancel' }
+        : {
+            prompt: 'Click more vertices, or click the first point to close',
+            modifiers: 'Enter close · Backspace undo point · Esc cancel',
+          }
     case 'roof':
       return pointCount < 4
         ? {
@@ -160,6 +172,11 @@ export function toolHint(tool: Tool, pointCount: number, wallMode: WallMode = 'l
       return pointCount === 0
         ? { prompt: 'Click the point the leader arrow should point at', modifiers: 'Esc cancel' }
         : { prompt: 'Click where the note text should sit', modifiers: 'Esc cancel' }
+    case 'spot':
+      return {
+        prompt: 'Click a point to read its elevation, coordinate, or roof slope',
+        modifiers: 'Pick the readout in the ribbon · Esc cancel',
+      }
     case 'columngrid':
       return {
         prompt: 'Click to place a column grid — edit axes in Properties',
@@ -209,9 +226,9 @@ export function modifyHint(tool: Tool, hasRef: boolean): string {
   return ''
 }
 
-/** Does this tool close a loop (slab, room) rather than collect a fixed number of points? */
+/** Does this tool close a loop (slab, room, ceiling) rather than collect a fixed number of points? */
 export function isLoopTool(tool: Tool): boolean {
-  return tool === 'slab' || tool === 'room' || tool === 'roof'
+  return tool === 'slab' || tool === 'room' || tool === 'roof' || tool === 'ceiling'
 }
 
 /**
@@ -273,6 +290,27 @@ export function buildModify(
 /** Tools that act on an existing host rather than placing free points. */
 export function isHostedTool(tool: Tool): boolean {
   return tool === 'door' || tool === 'window'
+}
+
+/**
+ * Tools that place an instance of an active TYPE (D7) — every one of these has its own
+ * `activeXTypeId` in the store. `repeatLastOperation` only tracks these: a room, room tag, text
+ * note, leader, or column grid has no "type" for "same tool + type + parameters" to mean.
+ */
+export function isTypedPlacementTool(tool: Tool): boolean {
+  return (
+    tool === 'wall' ||
+    tool === 'slab' ||
+    tool === 'door' ||
+    tool === 'window' ||
+    tool === 'column' ||
+    tool === 'beam' ||
+    tool === 'roof' ||
+    tool === 'primitive' ||
+    tool === 'stair' ||
+    tool === 'railing' ||
+    tool === 'ceiling'
+  )
 }
 
 export interface CommitResult {
@@ -341,6 +379,24 @@ export function buildCommit(state: EditorState, points: Vec2[]): CommitResult | 
 
     case 'slab': {
       if (points.length < 3) return null
+
+      // Opening mode (B8): the closed loop becomes a hole in whichever existing slab on this
+      // level contains it, rather than a new slab. Found by the loop's centroid, mirroring how
+      // `roomtag` hit-tests a click against room polygons — refuses (null → generic flash) when
+      // no slab qualifies, rather than guessing which one the user meant.
+      if (state.slabMode === 'opening') {
+        const target = state.scene.slabs.find(
+          (s) => s.levelId === activeLevelId && pointInPolygon(polygonCentroid(points), s.boundary),
+        )
+        if (!target) return null
+        return {
+          label: 'Add slab opening',
+          produce: (scene) => addSlabOpening(scene, target.id, points),
+          keepPoints: [],
+          selectAfter: () => target.id,
+        }
+      }
+
       let newId = ''
       return {
         label: 'Add slab',
@@ -452,6 +508,29 @@ export function buildCommit(state: EditorState, points: Vec2[]): CommitResult | 
         produce: (scene) => addRailing(scene, railing),
         keepPoints: [],
         selectAfter: () => railing.id,
+      }
+    }
+
+    case 'ceiling': {
+      if (points.length < 3) return null
+      if (!findCeilingType(state.scene, state.activeCeilingTypeId)) return null
+      const level = findLevel(state.scene, activeLevelId)
+      const id = generateId('ceil')
+      return {
+        label: 'Add ceiling',
+        produce: (scene) =>
+          addCeiling(scene, {
+            id,
+            typeId: state.activeCeilingTypeId,
+            levelId: activeLevelId,
+            boundary: points,
+            // Defaults to the underside of this level's own nominal height — the same "unconnected,
+            // level.height" default a wall/room top starts with (D-009) — which for a ceiling reads
+            // as "hangs right below the floor above".
+            top: { kind: 'unconnected', height: level?.height ?? 2.8 },
+          }),
+        keepPoints: [],
+        selectAfter: () => id,
       }
     }
 

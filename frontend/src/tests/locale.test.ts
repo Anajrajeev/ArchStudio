@@ -30,6 +30,7 @@ const ELEMENT_KINDS: ElementKind[] = [
   'boolean',
   'stair',
   'railing',
+  'ceiling',
 ]
 
 describe('properties.kind translations', () => {

@@ -225,6 +225,7 @@ type V2Scene = Omit<
   | 'booleans'
   | 'stairs'
   | 'railings'
+  | 'ceilings'
 > & { schemaVersion: 2 }
 
 // ---------------------------------------------------------------------------
@@ -234,7 +235,14 @@ type V2Scene = Omit<
 /** A v3 document is identical to v4 minus `columnGrids`. */
 type V3Scene = Omit<
   SceneGraph,
-  'schemaVersion' | 'columnGrids' | 'roofs' | 'primitives' | 'booleans' | 'stairs' | 'railings'
+  | 'schemaVersion'
+  | 'columnGrids'
+  | 'roofs'
+  | 'primitives'
+  | 'booleans'
+  | 'stairs'
+  | 'railings'
+  | 'ceilings'
 > & { schemaVersion: 3 }
 
 // ---------------------------------------------------------------------------
@@ -244,7 +252,7 @@ type V3Scene = Omit<
 /** A v4 document is identical to v5 minus `roofs`. */
 type V4Scene = Omit<
   SceneGraph,
-  'schemaVersion' | 'roofs' | 'primitives' | 'booleans' | 'stairs' | 'railings'
+  'schemaVersion' | 'roofs' | 'primitives' | 'booleans' | 'stairs' | 'railings' | 'ceilings'
 > & {
   schemaVersion: 4
 }
@@ -254,7 +262,10 @@ type V4Scene = Omit<
 // ---------------------------------------------------------------------------
 
 /** A v5 document is identical to v6 minus `primitives` and `booleans`. */
-type V5Scene = Omit<SceneGraph, 'schemaVersion' | 'primitives' | 'booleans' | 'stairs' | 'railings'> & {
+type V5Scene = Omit<
+  SceneGraph,
+  'schemaVersion' | 'primitives' | 'booleans' | 'stairs' | 'railings' | 'ceilings'
+> & {
   schemaVersion: 5
 }
 
@@ -263,7 +274,25 @@ type V5Scene = Omit<SceneGraph, 'schemaVersion' | 'primitives' | 'booleans' | 's
 // ---------------------------------------------------------------------------
 
 /** A v6 document is identical to v7 minus `stairs` and `railings`. */
-type V6Scene = Omit<SceneGraph, 'schemaVersion' | 'stairs' | 'railings'> & { schemaVersion: 6 }
+type V6Scene = Omit<SceneGraph, 'schemaVersion' | 'stairs' | 'railings' | 'ceilings'> & {
+  schemaVersion: 6
+}
+
+// ---------------------------------------------------------------------------
+// v7 shape (frozen — do not edit; this is history)
+// ---------------------------------------------------------------------------
+
+/**
+ * A v7 document is identical to v8 minus `ceilings`, minus each slab's `openings`, and minus
+ * each annotation's `elevation`/`slope` fields.
+ */
+type V7Slab = Omit<SceneGraph['slabs'][number], 'openings'>
+type V7Annotation = Omit<SceneGraph['annotations'][number], 'elevation' | 'slope'>
+type V7Scene = Omit<SceneGraph, 'schemaVersion' | 'ceilings' | 'slabs' | 'annotations'> & {
+  schemaVersion: 7
+  slabs: V7Slab[]
+  annotations: V7Annotation[]
+}
 
 // ---------------------------------------------------------------------------
 // v2 → v3
@@ -342,7 +371,7 @@ function migrateV5ToV6(v5: V5Scene): V6Scene {
  * already taken) so a migrated project can use both tools immediately rather than hitting a
  * "no stair/railing type" refusal.
  */
-function migrateV6ToV7(v6: V6Scene): SceneGraph {
+function migrateV6ToV7(v6: V6Scene): V7Scene {
   const existingIds = new Set(v6.types.map((t) => t.id))
   const missingTypes = DEFAULT_TYPES.filter(
     (t) => (t.category === 'stair' || t.category === 'railing') && !existingIds.has(t.id),
@@ -350,10 +379,42 @@ function migrateV6ToV7(v6: V6Scene): SceneGraph {
 
   return {
     ...v6,
-    schemaVersion: SCHEMA_VERSION,
+    schemaVersion: 7,
     types: [...v6.types, ...missingTypes],
     stairs: [],
     railings: [],
+  }
+}
+
+// ---------------------------------------------------------------------------
+// v7 → v8
+// ---------------------------------------------------------------------------
+
+/**
+ * v8 adds ceilings (B5), slab openings/shafts (B8), and spot elevation/coordinate/slope
+ * annotations (C4). All three are purely additive:
+ *  - `ceilings` starts empty, with the default CEILING type back-filled (skipping any id already
+ *    taken) so a migrated project can use the tool immediately, the same reasoning as every prior
+ *    additive migration in this file.
+ *  - every existing slab gets `openings: []` — no slab in a v7 document could express a cut, so
+ *    nothing about its rendered geometry changes.
+ *  - every existing annotation gets `elevation: null, slope: null` — those fields are meaningless
+ *    for `text`/`label`/`leader`, which is exactly what null already means elsewhere in this schema
+ *    for "not applicable to this variant".
+ */
+function migrateV7ToV8(v7: V7Scene): SceneGraph {
+  const existingIds = new Set(v7.types.map((t) => t.id))
+  const missingTypes = DEFAULT_TYPES.filter(
+    (t) => t.category === 'ceiling' && !existingIds.has(t.id),
+  ).map((t) => ({ ...t }))
+
+  return {
+    ...v7,
+    schemaVersion: SCHEMA_VERSION,
+    types: [...v7.types, ...missingTypes],
+    slabs: v7.slabs.map((s) => ({ ...s, openings: [] })),
+    annotations: v7.annotations.map((a) => ({ ...a, elevation: null, slope: null })),
+    ceilings: [],
   }
 }
 
@@ -374,17 +435,24 @@ export function migrateScene(raw: unknown): SceneGraph {
   const version = (raw as { schemaVersion?: unknown }).schemaVersion
 
   if (version === 1) {
-    return migrateV6ToV7(
-      migrateV5ToV6(migrateV4ToV5(migrateV3ToV4(migrateV2ToV3(migrateV1ToV2(raw as V1Scene))))),
+    return migrateV7ToV8(
+      migrateV6ToV7(
+        migrateV5ToV6(migrateV4ToV5(migrateV3ToV4(migrateV2ToV3(migrateV1ToV2(raw as V1Scene))))),
+      ),
     )
   }
   if (version === 2) {
-    return migrateV6ToV7(migrateV5ToV6(migrateV4ToV5(migrateV3ToV4(migrateV2ToV3(raw as V2Scene)))))
+    return migrateV7ToV8(
+      migrateV6ToV7(migrateV5ToV6(migrateV4ToV5(migrateV3ToV4(migrateV2ToV3(raw as V2Scene))))),
+    )
   }
-  if (version === 3) return migrateV6ToV7(migrateV5ToV6(migrateV4ToV5(migrateV3ToV4(raw as V3Scene))))
-  if (version === 4) return migrateV6ToV7(migrateV5ToV6(migrateV4ToV5(raw as V4Scene)))
-  if (version === 5) return migrateV6ToV7(migrateV5ToV6(raw as V5Scene))
-  if (version === 6) return migrateV6ToV7(raw as V6Scene)
+  if (version === 3) {
+    return migrateV7ToV8(migrateV6ToV7(migrateV5ToV6(migrateV4ToV5(migrateV3ToV4(raw as V3Scene)))))
+  }
+  if (version === 4) return migrateV7ToV8(migrateV6ToV7(migrateV5ToV6(migrateV4ToV5(raw as V4Scene))))
+  if (version === 5) return migrateV7ToV8(migrateV6ToV7(migrateV5ToV6(raw as V5Scene)))
+  if (version === 6) return migrateV7ToV8(migrateV6ToV7(raw as V6Scene))
+  if (version === 7) return migrateV7ToV8(raw as V7Scene)
   if (version === SCHEMA_VERSION) return raw as SceneGraph
 
   if (typeof version === 'number' && version > SCHEMA_VERSION) {

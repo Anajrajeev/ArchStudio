@@ -33,6 +33,7 @@ import {
   IconBoolean,
   IconStair,
   IconRailing,
+  IconCeiling,
 } from './Icons'
 import { freePrimitives, rootBooleanNodes } from '../../../shared/geometry/booleanTree'
 
@@ -79,6 +80,7 @@ function SectionHeader({
         onClick={onToggle}
         style={{ display: 'flex', alignItems: 'center', gap: 'var(--sp-4)', color: 'var(--text-dim)' }}
         aria-expanded={open}
+        aria-label={label}
       >
         {open ? <IconChevronDown /> : <IconChevronRight />}
         <span className="section-label">{label}</span>
@@ -156,6 +158,15 @@ function LevelsSection() {
                   className={`tree-row ${active ? 'tree-row--selected' : ''}`}
                   onClick={() => setActiveLevel(level.id)}
                   onDoubleClick={() => setActiveLevel(level.id)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault()
+                      setActiveLevel(level.id)
+                    }
+                  }}
+                  role="option"
+                  aria-selected={active}
+                  tabIndex={0}
                   title={`${level.name} — elevation ${level.elevation.toFixed(3)} m`}
                 >
                   <IconLayers style={{ color: active ? 'var(--text-accent)' : 'var(--icon-default)' }} />
@@ -242,6 +253,7 @@ function ActiveLevelHeight() {
         onChange={(e) => setText(e.target.value)}
         onBlur={apply}
         onKeyDown={(e) => e.key === 'Enter' && apply()}
+        aria-label={t('properties.storeyHeight')}
       />
     </div>
   )
@@ -289,6 +301,7 @@ const KIND_ICON: Partial<Record<ElementKind, React.ReactNode>> = {
   boolean: <IconBoolean />,
   stair: <IconStair />,
   railing: <IconRailing />,
+  ceiling: <IconCeiling />,
 }
 
 function ModelTreeSection() {
@@ -388,6 +401,12 @@ function ModelTreeSection() {
         kind: 'railing' as ElementKind,
         ids: scene.railings.filter((r) => r.levelId === activeLevelId).map((r) => r.id),
       },
+      {
+        key: 'ceilings',
+        label: t('tree.ceilings'),
+        kind: 'ceiling' as ElementKind,
+        ids: scene.ceilings.filter((c) => c.levelId === activeLevelId).map((c) => c.id),
+      },
     ].filter((g) => g.ids.length > 0)
   }, [scene, activeLevelId, t])
 
@@ -425,6 +444,7 @@ function ModelTreeSection() {
                   style={{ width: '100%', color: 'var(--text-dim)' }}
                   onClick={() => setCollapsed((c) => ({ ...c, [g.key]: !c[g.key] }))}
                   aria-expanded={!isCollapsed}
+                  aria-label={`${g.label} — ${g.ids.length} items`}
                 >
                   {isCollapsed ? <IconChevronRight /> : <IconChevronDown />}
                   <span className="section-label">{g.label}</span>
@@ -440,8 +460,17 @@ function ModelTreeSection() {
                       className={`tree-row ${selectedIds.includes(id) ? 'tree-row--selected' : ''}`}
                       style={{ paddingLeft: 26 }}
                       onClick={(e) => select(id, e.shiftKey)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' || e.key === ' ') {
+                          e.preventDefault()
+                          select(id, e.shiftKey)
+                        }
+                      }}
                       onMouseEnter={() => setHovered(id)}
                       onMouseLeave={() => setHovered(null)}
+                      role="option"
+                      aria-selected={selectedIds.includes(id)}
+                      tabIndex={0}
                       title={elementLabel(scene, id)}
                     >
                       <span style={{ color: 'var(--icon-default)', display: 'flex' }}>

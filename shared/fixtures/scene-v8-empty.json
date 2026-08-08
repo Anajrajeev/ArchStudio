@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 7,
+  "schemaVersion": 8,
   "projectId": "fixture-project",
   "units": "m",
   "types": [
@@ -229,6 +229,18 @@
       "postThickness": 0.04,
       "postSpacing": 1,
       "material": "mat-steel"
+    },
+    {
+      "id": "clt-plaster-15",
+      "category": "ceiling",
+      "name": "Plaster ceiling — 15mm",
+      "layers": [
+        {
+          "material": "mat-plaster-white",
+          "thickness": 0.015,
+          "function": "finish"
+        }
+      ]
     }
   ],
   "levels": [],
@@ -299,5 +311,6 @@
   "primitives": [],
   "booleans": [],
   "stairs": [],
-  "railings": []
+  "railings": [],
+  "ceilings": []
 }

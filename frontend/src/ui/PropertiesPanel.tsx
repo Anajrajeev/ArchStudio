@@ -27,12 +27,15 @@ import {
 import { primitiveErrorMessage } from '../viewport/Primitives'
 import {
   resolveWall,
+  resolveCeiling,
   baselineLength,
   roomArea,
   polygonPerimeter,
   validateWall,
   validateOpening,
+  validateCeiling,
 } from '../../../shared/geometry/index'
+import { resolveAnnotation } from '../../../shared/geometry/annotations'
 import { useEditor, parseLengthInput, formatLength } from '../scene/store'
 import {
   deleteElement,
@@ -64,6 +67,8 @@ import {
   updateBooleanNode,
   updateStair,
   updateRailing,
+  updateCeiling,
+  removeSlabOpening,
 } from '../scene/mutations'
 import { resolveRoof, isRoofError } from '../../../shared/geometry/roof'
 import { resolveStair, validateStair } from '../../../shared/geometry/stair'
@@ -109,7 +114,7 @@ export default function PropertiesPanel() {
       </div>
       <hr className="divider" />
 
-      {!single && (
+      {!single && selectedIds.length <= 1 && (
         <p
           style={{
             color: 'var(--text-dim)',
@@ -118,9 +123,11 @@ export default function PropertiesPanel() {
             margin: 0,
           }}
         >
-          {selectedIds.length > 1 ? t('properties.multiHint') : t('properties.none')}
+          {t('properties.none')}
         </p>
       )}
+
+      {!single && selectedIds.length > 1 && <MultiProps ids={selectedIds} />}
 
       {/* The transform verbs work on a multi-selection, so they sit above the per-element editors
           and are the one part of this panel that is useful with several things selected. */}
@@ -156,6 +163,7 @@ export default function PropertiesPanel() {
           {single.kind === 'boolean' && <BooleanProps id={single.id} />}
           {single.kind === 'stair' && <StairProps id={single.id} />}
           {single.kind === 'railing' && <RailingProps id={single.id} />}
+          {single.kind === 'ceiling' && <CeilingProps id={single.id} />}
 
           <div style={{ padding: 'var(--sp-8)' }}>
             <button
@@ -174,6 +182,338 @@ export default function PropertiesPanel() {
       )}
     </aside>
   )
+}
+
+// ---------------------------------------------------------------------------
+// Multi-select shared property editing (A10)
+// ---------------------------------------------------------------------------
+
+/**
+ * When several elements of the SAME kind are selected, show the instance fields they all have —
+ * and, for a type-level field like wall thickness, apply it to every DISTINCT type among the
+ * selection — so editing one field updates every selected element in a single undo step. A mixed-
+ * kind selection has no fields in common worth guessing at, so it keeps the plain hint instead.
+ */
+function MultiProps({ ids }: { ids: string[] }) {
+  const { t } = useTranslation()
+  const scene = useEditor((s) => s.scene)
+  const commit = useEditor((s) => s.commit)
+
+  const kinds = new Set(ids.map((id) => findElement(scene, id)?.kind))
+  const kind = kinds.size === 1 ? [...kinds][0] : null
+
+  const hint = (
+    <p
+      style={{
+        color: 'var(--text-dim)',
+        fontSize: 'var(--fs-body)',
+        padding: 'var(--sp-12) var(--sp-8)',
+        margin: 0,
+      }}
+    >
+      {t('properties.multiHint')}
+    </p>
+  )
+  if (!kind) return hint
+
+  /** Apply one patch to every selected element, as a single undoable commit. */
+  const commitAll = (label: string, patch: (sc: SceneGraph, id: string) => SceneGraph) =>
+    commit(label, (sc) => ids.reduce((acc, id) => patch(acc, id), sc))
+
+  /** Apply a type-level field to every DISTINCT type among the selection (D-009's "edit the type,
+   *  every instance updates" — bulk-applied to however many types this selection happens to span). */
+  const commitAllTypes = (label: string, typeIdOf: (sc: SceneGraph, id: string) => string | undefined, patch: (sc: SceneGraph, typeId: string) => SceneGraph) =>
+    commit(label, (sc) => {
+      const typeIds = new Set(ids.map((id) => typeIdOf(sc, id)).filter((t): t is string => !!t))
+      return [...typeIds].reduce((acc, typeId) => patch(acc, typeId), sc)
+    })
+
+  switch (kind) {
+    case 'wall': {
+      const first = scene.walls.find((w) => ids.includes(w.id))!
+      const type = findType(scene, first.typeId)
+      return (
+        <Group label={t('properties.instanceGroup')}>
+          {type?.category === 'wall' && (
+            <NumberField
+              label={t('properties.thickness')}
+              value={assemblyThickness(type.layers)}
+              min={0.01}
+              step={0.01}
+              hint={t('properties.sharedHint')}
+              onCommit={(v) =>
+                commitAllTypes(
+                  'Set wall thickness',
+                  (sc, id) => sc.walls.find((w) => w.id === id)?.typeId,
+                  (sc, typeId) => setWallTypeThickness(sc, typeId, v),
+                )
+              }
+            />
+          )}
+          <NumberField
+            label={t('properties.baseOffset')}
+            value={first.baseOffset}
+            step={0.05}
+            onCommit={(v) => commitAll('Set base offset', (sc, id) => updateWall(sc, id, { baseOffset: v }))}
+          />
+          <CheckField
+            label={t('properties.flipped')}
+            value={first.flipped}
+            onCommit={(v) => commitAll('Flip walls', (sc, id) => updateWall(sc, id, { flipped: v }))}
+          />
+          <CheckField
+            label={t('properties.roomBounding')}
+            value={first.roomBounding}
+            onCommit={(v) => commitAll('Set room bounding', (sc, id) => updateWall(sc, id, { roomBounding: v }))}
+          />
+        </Group>
+      )
+    }
+
+    case 'slab':
+    case 'ceiling': {
+      const collection = kind === 'slab' ? scene.slabs : scene.ceilings
+      const first = collection.find((x) => ids.includes(x.id))!
+      const type = findType(scene, first.typeId)
+      return (
+        <Group label={t('properties.instanceGroup')}>
+          {type && 'layers' in type && (
+            <NumberField
+              label={t('properties.thickness')}
+              value={assemblyThickness(type.layers)}
+              min={0.001}
+              step={0.001}
+              hint={t('properties.sharedHint')}
+              onCommit={(v) =>
+                commitAllTypes(
+                  'Set thickness',
+                  (sc, id) => (kind === 'slab' ? sc.slabs : sc.ceilings).find((x) => x.id === id)?.typeId,
+                  (sc, typeId) => {
+                    const t2 = findType(sc, typeId)
+                    if (!t2 || !('layers' in t2)) return sc
+                    const current = assemblyThickness(t2.layers)
+                    if (current <= 0) return sc
+                    const k = v / current
+                    return updateType(sc, typeId, {
+                      layers: t2.layers.map((l) => ({ ...l, thickness: l.thickness * k })),
+                    })
+                  },
+                )
+              }
+            />
+          )}
+          {kind === 'slab' && (
+            <NumberField
+              label={t('properties.heightOffset')}
+              value={(first as (typeof scene.slabs)[number]).heightOffset}
+              step={0.05}
+              onCommit={(v) => commitAll('Set slab offset', (sc, id) => updateSlab(sc, id, { heightOffset: v }))}
+            />
+          )}
+        </Group>
+      )
+    }
+
+    case 'column': {
+      const first = scene.columns.find((c) => ids.includes(c.id))!
+      return (
+        <Group label={t('properties.instanceGroup')}>
+          <NumberField
+            label={t('properties.rotation')}
+            value={first.rotation}
+            step={15}
+            unit="°"
+            onCommit={(v) => commitAll('Rotate columns', (sc, id) => updateColumn(sc, id, { rotation: v }))}
+          />
+          <NumberField
+            label={t('properties.baseOffset')}
+            value={first.baseOffset}
+            step={0.05}
+            onCommit={(v) => commitAll('Set base offset', (sc, id) => updateColumn(sc, id, { baseOffset: v }))}
+          />
+        </Group>
+      )
+    }
+
+    case 'beam': {
+      const first = scene.beams.find((b) => ids.includes(b.id))!
+      return (
+        <Group label={t('properties.instanceGroup')}>
+          <NumberField
+            label={t('properties.heightOffset')}
+            value={first.heightOffset}
+            step={0.05}
+            onCommit={(v) => commitAll('Set beam height', (sc, id) => updateBeam(sc, id, { heightOffset: v }))}
+          />
+          <NumberField
+            label={t('properties.crossSectionRotation')}
+            value={first.crossSectionRotation}
+            step={15}
+            unit="°"
+            onCommit={(v) => commitAll('Rotate sections', (sc, id) => updateBeam(sc, id, { crossSectionRotation: v }))}
+          />
+        </Group>
+      )
+    }
+
+    case 'room': {
+      const first = scene.rooms.find((r) => ids.includes(r.id))!
+      return (
+        <Group label={t('properties.instanceGroup')}>
+          <MaterialField
+            label={t('properties.floorMaterial')}
+            value={first.floorMaterial}
+            onCommit={(v) => commitAll('Set floor material', (sc, id) => updateRoom(sc, id, { floorMaterial: v }))}
+          />
+        </Group>
+      )
+    }
+
+    case 'furniture': {
+      const first = scene.furniture.find((f) => ids.includes(f.id))!
+      return (
+        <Group label={t('properties.instanceGroup')}>
+          <NumberField
+            label={t('properties.rotation')}
+            value={first.rotation}
+            step={15}
+            unit="°"
+            onCommit={(v) => commitAll('Rotate furniture', (sc, id) => updateFurniture(sc, id, { rotation: v }))}
+          />
+          <NumberField
+            label={t('properties.scale')}
+            value={first.scale}
+            min={0.1}
+            step={0.1}
+            onCommit={(v) => commitAll('Scale furniture', (sc, id) => updateFurniture(sc, id, { scale: v }))}
+          />
+          <NumberField
+            label={t('properties.heightOffset')}
+            value={first.heightOffset}
+            step={0.05}
+            onCommit={(v) => commitAll('Set height', (sc, id) => updateFurniture(sc, id, { heightOffset: v }))}
+          />
+        </Group>
+      )
+    }
+
+    case 'primitive': {
+      const first = scene.primitives.find((p) => ids.includes(p.id))!
+      return (
+        <Group label={t('properties.instanceGroup')}>
+          <NumberField
+            label={t('properties.heightOffset')}
+            value={first.heightOffset}
+            step={0.05}
+            onCommit={(v) => commitAll('Set shape elevation', (sc, id) => updatePrimitive(sc, id, { heightOffset: v }))}
+          />
+          <NumberField
+            label={t('properties.rotation')}
+            value={first.rotation}
+            step={5}
+            unit="°"
+            onCommit={(v) => commitAll('Rotate shapes', (sc, id) => updatePrimitive(sc, id, { rotation: v }))}
+          />
+          <NumberField
+            label={t('properties.scale')}
+            value={first.scale}
+            min={0.001}
+            step={0.1}
+            onCommit={(v) => commitAll('Scale shapes', (sc, id) => updatePrimitive(sc, id, { scale: v }))}
+          />
+        </Group>
+      )
+    }
+
+    case 'stair':
+    case 'railing': {
+      const collection = kind === 'stair' ? scene.stairs : scene.railings
+      const first = collection.find((x) => ids.includes(x.id))!
+      return (
+        <Group label={t('properties.instanceGroup')}>
+          <NumberField
+            label={t('properties.baseOffset')}
+            value={first.baseOffset}
+            step={0.05}
+            onCommit={(v) =>
+              commitAll('Set base offset', (sc, id) =>
+                kind === 'stair' ? updateStair(sc, id, { baseOffset: v }) : updateRailing(sc, id, { baseOffset: v }),
+              )
+            }
+          />
+        </Group>
+      )
+    }
+
+    case 'roof': {
+      const first = scene.roofs.find((r) => ids.includes(r.id))!
+      return (
+        <Group label={t('properties.instanceGroup')}>
+          <NumberField
+            label={t('properties.roofAngle')}
+            value={first.edges[0]?.angle ?? 30}
+            min={1}
+            max={89}
+            step={1}
+            unit="°"
+            onCommit={(v) => commitAll('Set roof angle', (sc, id) => setRoofUniformEdge(sc, id, { angle: v }))}
+          />
+          <NumberField
+            label={t('properties.roofBaseHeight')}
+            value={first.baseHeight}
+            step={0.05}
+            onCommit={(v) => commitAll('Set roof base height', (sc, id) => updateRoof(sc, id, { baseHeight: v }))}
+          />
+        </Group>
+      )
+    }
+
+    case 'annotation': {
+      const first = scene.annotations.find((a) => ids.includes(a.id))!
+      return (
+        <Group label={t('properties.instanceGroup')}>
+          <NumberField
+            label={t('properties.rotation')}
+            value={first.rotation}
+            step={15}
+            unit="°"
+            onCommit={(v) => commitAll('Rotate text', (sc, id) => updateAnnotation(sc, id, { rotation: v }))}
+          />
+          <NumberField
+            label={t('properties.textHeight')}
+            value={first.textHeight}
+            min={0.02}
+            step={0.02}
+            onCommit={(v) => commitAll('Set text height', (sc, id) => updateAnnotation(sc, id, { textHeight: v }))}
+          />
+        </Group>
+      )
+    }
+
+    case 'dimension': {
+      const first = scene.dimensions.find((d) => ids.includes(d.id))!
+      return (
+        <Group label={t('properties.instanceGroup')}>
+          <NumberField
+            label={t('properties.offsetDistance')}
+            value={first.offsetDistance}
+            step={0.05}
+            onCommit={(v) => commitAll('Set dimension offset', (sc, id) => updateDimension(sc, id, { offsetDistance: v }))}
+          />
+          <NumberField
+            label={t('properties.witnessGap')}
+            value={first.witnessGap}
+            min={0}
+            step={0.01}
+            onCommit={(v) => commitAll('Set witness gap', (sc, id) => updateDimension(sc, id, { witnessGap: v }))}
+          />
+        </Group>
+      )
+    }
+
+    default:
+      return hint
+  }
 }
 
 /** Surface validation errors instead of producing invalid geometry silently. */
@@ -197,6 +537,9 @@ function Validation({
     const f = scene.fillings.find((x) => x.id === id)
     const o = f ? scene.openings.find((x) => x.id === f.openingId) : undefined
     if (o) errors = validateOpening(scene, o)
+  } else if (kind === 'ceiling') {
+    const c = scene.ceilings.find((x) => x.id === id)
+    if (c) errors = validateCeiling(scene, c)
   }
   if (errors.length === 0) return null
 
@@ -352,7 +695,8 @@ function LayerList({ typeId }: { typeId: string }) {
   const { t } = useTranslation()
   const scene = useEditor((s) => s.scene)
   const type = findType(scene, typeId)
-  if (!type || (type.category !== 'wall' && type.category !== 'slab')) return null
+  if (!type || (type.category !== 'wall' && type.category !== 'slab' && type.category !== 'ceiling'))
+    return null
 
   return (
     <div className="prop-span" style={{ marginTop: 'var(--sp-4)' }}>
@@ -568,6 +912,67 @@ function SlabProps({ id }: { id: string }) {
           value={formatLength(polygonPerimeter(slab.boundary), scene.units)}
         />
       </Group>
+
+      {slab.openings.length > 0 && (
+        <Group label={`${t('properties.openings')} (${slab.openings.length})`}>
+          {slab.openings.map((opening, i) => (
+            <div key={i} style={{ display: 'contents' }}>
+              <ReadOnly label={`${i + 1}`} value={`${roomArea(opening).toFixed(2)} m²`} />
+              <button
+                className="btn"
+                onClick={() => commit('Remove slab opening', (s) => removeSlabOpening(s, id, i))}
+              >
+                {t('properties.openingRemove')}
+              </button>
+            </div>
+          ))}
+        </Group>
+      )}
+    </>
+  )
+}
+
+/**
+ * Ceiling (B5): a boundary polygon like Slab, but anchored at its finished BOTTOM face via the
+ * same TopConstraint union walls/columns/stairs use, so "attaches to the underside of a level" is
+ * just pointing it at the level above — no new field to learn.
+ */
+function CeilingProps({ id }: { id: string }) {
+  const { t } = useTranslation()
+  const scene = useEditor((s) => s.scene)
+  const commit = useEditor((s) => s.commit)
+  const ceiling = scene.ceilings.find((x) => x.id === id)
+  if (!ceiling) return null
+  const type = findType(scene, ceiling.typeId)
+  const resolved = resolveCeiling(scene, ceiling)
+  if (!type || type.category !== 'ceiling') return null
+
+  return (
+    <>
+      <Group label={t('properties.typeGroup')}>
+        <TypePicker elementId={id} category="ceiling" typeId={ceiling.typeId} />
+        <ReadOnly
+          label={t('properties.thickness')}
+          value={formatLength(assemblyThickness(type.layers), scene.units)}
+        />
+        <LayerList typeId={ceiling.typeId} />
+      </Group>
+      <Group label={t('properties.instanceGroup')}>
+        <TopConstraintField
+          value={ceiling.top}
+          levelId={ceiling.levelId}
+          onCommit={(top) => commit('Set ceiling bottom', (s) => updateCeiling(s, id, { top }))}
+        />
+        <ReadOnly label={t('properties.area')} value={`${roomArea(ceiling.boundary).toFixed(2)} m²`} />
+        <ReadOnly
+          label={t('properties.perimeter')}
+          value={formatLength(polygonPerimeter(ceiling.boundary), scene.units)}
+        />
+        <ReadOnly
+          label={t('properties.elevation')}
+          value={resolved ? formatLength(resolved.bottomElevation, scene.units) : '—'}
+        />
+      </Group>
     </>
   )
 }
@@ -712,6 +1117,8 @@ function FurnitureProps({ id }: { id: string }) {
   )
 }
 
+/** Text/label/leader are freely editable notes. Spot elevation/coordinate/slope (C4) are computed
+ *  readouts sampled at placement — no text to edit, and no sense reassigning the kind here. */
 function AnnotationProps({ id }: { id: string }) {
   const { t } = useTranslation()
   const scene = useEditor((s) => s.scene)
@@ -719,27 +1126,43 @@ function AnnotationProps({ id }: { id: string }) {
   const ann = scene.annotations.find((x) => x.id === id)
   if (!ann) return null
 
+  const SPOT_LABEL_KEY = {
+    'spot-elevation': 'properties.spotElevation',
+    'spot-coordinate': 'properties.spotCoordinate',
+    'spot-slope': 'properties.spotSlope',
+  } as const
+  const isSpot = ann.kind in SPOT_LABEL_KEY
+
   return (
     <Group label={t('properties.instanceGroup')}>
-      <TextField
-        label={t('properties.text')}
-        value={ann.text}
-        onCommit={(v) => commit('Edit text', (s) => updateAnnotation(s, id, { text: v }))}
-      />
-      <SelectField
-        label={t('properties.kindGroup')}
-        value={ann.kind}
-        options={[
-          { value: 'text', label: t('properties.kind.annotation') },
-          { value: 'label', label: t('properties.annotationLabel') },
-          { value: 'leader', label: t('properties.annotationLeader') },
-        ]}
-        onCommit={(v) =>
-          commit('Set annotation kind', (s) =>
-            updateAnnotation(s, id, { kind: v as (typeof ann)['kind'] }),
-          )
-        }
-      />
+      {isSpot ? (
+        <ReadOnly
+          label={t(SPOT_LABEL_KEY[ann.kind as keyof typeof SPOT_LABEL_KEY])}
+          value={resolveAnnotation(ann).text}
+        />
+      ) : (
+        <>
+          <TextField
+            label={t('properties.text')}
+            value={ann.text}
+            onCommit={(v) => commit('Edit text', (s) => updateAnnotation(s, id, { text: v }))}
+          />
+          <SelectField
+            label={t('properties.kindGroup')}
+            value={ann.kind}
+            options={[
+              { value: 'text', label: t('properties.kind.annotation') },
+              { value: 'label', label: t('properties.annotationLabel') },
+              { value: 'leader', label: t('properties.annotationLeader') },
+            ]}
+            onCommit={(v) =>
+              commit('Set annotation kind', (s) =>
+                updateAnnotation(s, id, { kind: v as (typeof ann)['kind'] }),
+              )
+            }
+          />
+        </>
+      )}
       <NumberField
         label={t('properties.rotation')}
         value={ann.rotation}

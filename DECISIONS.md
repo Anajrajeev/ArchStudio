@@ -506,6 +506,143 @@ that outright.
 
 ---
 
+## D-022 — Ceilings: a boundary polygon anchored at its BOTTOM face, not a Box3D (Phase 1B-iii, B5)
+
+**Decision:** Schema v8 adds `CeilingTypeDef` (`layers`, mirroring Slab) and `Ceiling`
+(`boundary: Vec2[]`, `top: TopConstraint`). Geometrically a ceiling is `resolveCeiling` +
+`CeilingMesh`/`buildSceneGroup`'s ceiling loop: the SAME `THREE.Shape` + `ExtrudeGeometry` polygon
+extrusion Slab already uses, positioned at `bottomElevation + thickness` so it extrudes *down* to
+the finished bottom face — the mirror image of how a Slab extrudes down from a stored *top*.
+`Ceiling.top` reuses the exact wall/column/stair `TopConstraint` union (never a bespoke field), so
+pointing it at the level ABOVE places the finished face at that level's floor — "attaches to the
+underside of a level" falls out of the existing constraint semantics with no new concept.
+
+**Reasoning — deviation from the task's own framing, logged rather than silently substituted:** the
+backlog item asked to "reuse the Box3D solid decomposition... pattern already used by walls,
+stairs, and railings." Box3D decomposition is for LINEAR elements that run along a baseline or
+path; a ceiling is a closed BOUNDARY, exactly like Slab and Room, which don't use Box3D either. The
+task's own wording calls the item "analogous to Slab" in the same sentence — that's the shape this
+element actually has. Forcing a boundary polygon through per-edge Box3D chunks (as a wall's
+solid-box run does) would need a genuinely new decomposition just to re-derive what
+`ExtrudeGeometry` already does correctly and for free, and would leave Slab and Ceiling — two
+polygon elements that differ only in which face is the anchor — rendered by two unrelated code
+paths. Reusing Slab's own established pattern keeps one shape of code for one shape of element.
+
+**Consequence:** no new rendering primitive. `polygonToShape` (already shared between
+`viewport/Elements.tsx` and `export/buildSceneGroup.ts` for Slab and Room) needed no change to
+serve Ceiling too. Python mirror (`Ceiling`, `CeilingTypeDef`) and the golden fixtures landed in the
+same pass.
+
+---
+
+## D-023 — Slab openings/shafts cut with `THREE.Shape` holes, not `three-bvh-csg` (Phase 1B-iii, B8)
+
+**Decision:** `Slab.openings: Vec2[][]` — inner-loop polygons in the same absolute scene-2D space as
+`boundary`, always a full-thickness through-cut (never a partial recess, unlike a wall's
+`Opening`). `resolveSlab` passes them through unchanged; `viewport/Elements.tsx` and
+`export/buildSceneGroup.ts` add each as a `shape.holes.push(new THREE.Path(...))`, wound opposite
+the (already CCW-normalised) outer boundary. `ExtrudeGeometry` then builds the top cap, bottom cap
+AND the hole's own side walls automatically — a shaft reads as a genuine cut through the slab, not
+a decal on its top face.
+
+**Reasoning:** D-005 already chose box decomposition over CSG for *wall* openings because they are
+axis-aligned rectangles in the wall's own local frame, where box math is exact and box decomposition
+is what the wall renderer already does. A slab opening has no such local frame (a stairwell or
+shaft is an arbitrary polygon in absolute scene-2D) and the renderer for a slab boundary is already
+polygon extrusion, not boxes — so the *correct* closed-form tool here is a second loop in the same
+`THREE.Shape`, which is exactly what a hole is, not `three-bvh-csg` (D-019). This keeps the same
+"CSG only where a closed-form tool genuinely does not exist" discipline D-019 and D-005 both apply,
+just landing on a different closed-form tool for a differently-shaped problem.
+
+**Validation:** `validateSlab` extends its existing polygon checks (reused from `validateRoomPolygon`,
+renamed per-opening) to each opening, plus a containment check (every opening vertex must lie inside
+the outer boundary via the same `pointInPolygon` the snap engine and room-tag hit-testing already
+use) — a hole with nothing to cut is refused, not silently accepted.
+
+**Editor surface:** the slab tool gained a `SlabMode` (`solid` | `opening`), toggled by `A` exactly
+like the wall tool's own line/arc toggle (never a conflict, since only one tool is ever active) —
+deliberately NOT a new tool letter, since the alphabet was already fully spoken for by this pass
+(see D-025). Committing an opening loop finds its target by which existing slab (on the active
+level) contains the loop's centroid — the same "hit-test against existing geometry" shape roomtag
+already uses — and refuses (a generic invalid-element flash) rather than guessing when none does.
+
+---
+
+## D-024 — Spot annotations: computed from what Dynamic UCS is showing at PLACEMENT time (Phase 1B-iii, C4)
+
+**Decision:** Three new `AnnotationKind`s — `spot-elevation`, `spot-coordinate`, `spot-slope` — each
+placed by a single click of one new `spot` tool (a `SpotMode` ribbon toggle picks which, the same
+shape as B8's `SlabMode`). `Annotation` gains `elevation: number | null` and `slope: number | null`;
+`position` (already on every annotation) doubles as the coordinate readout. All three numbers are
+SAMPLED once at the moment of the click, not stored as a live reference to a host element:
+
+- **Elevation** reads `pointerResolution.world[1]` — literally the active work plane's elevation at
+  the clicked point. Since Dynamic UCS (A2) already re-planes onto a hovered wall/slab/column/beam
+  top before the click lands, hovering the element you want the elevation of and then clicking is
+  the whole interaction; no new plane- or host-tracking code was needed.
+- **Coordinate** is just `position` — already live/parametric for free, since editing an
+  annotation's placement already re-renders from the same field.
+- **Slope** is not derivable from the work plane, because A2 deliberately only re-planes onto
+  HORIZONTAL faces (D-007/dynamicPlane.ts) — this app's work-plane normal is always vertical, so it
+  can never encode a grade. Instead, the click is point-in-polygon tested against every roof
+  footprint on the active level; a v1 roof's slope is UNIFORM across its whole footprint by
+  construction (D-018), so "the slope at this point" is exactly `tan(edges[0].angle) * 100`, no
+  per-point sampling required. Clicking outside every roof footprint refuses with a message rather
+  than reporting a meaningless 0%.
+
+**Reasoning for "sampled, not live":** a genuinely live spot elevation would need to track WHICH
+host face it sits on (a `hostId`, resolved every render like `elementTopFace` already does for the
+hover plane) — a real feature, but a materially bigger one than a P2 readout tool warrants, and one
+that raises its own questions this task didn't ask (what happens when the host is deleted, or the
+picked point falls outside the host's footprint after an edit). The "measure" tool already
+establishes the precedent that a readout in this app can be a snapshot rather than a tracked
+reference. `resolveAnnotation` still computes the DISPLAY TEXT from the stored numbers on every
+render (never storing a formatted string), so a future unit-formatting change updates every spot tag
+for free — the same reasoning `Dimension`'s auto-computed text already uses.
+
+**Consequence:** `PropertiesPanel`'s `AnnotationProps` shows the computed text read-only for the
+three spot kinds (no text field to edit, no kind selector to reassign into/out of a spot kind,
+since neither makes sense for a computed sample) while `text`/`label`/`leader` keep the full
+free-text editor unchanged.
+
+---
+
+## D-025 — Two small editor-ergonomics items share one letter/key budget note (Phase 1B-iii, D7/A10)
+
+**Decision, D7 (repeat-last-operation):** the store tracks `lastPlacementTool` — the last tool a
+TYPED placement (`isTypedPlacementTool`: wall/slab/door/window/column/beam/roof/primitive/stair/
+railing/ceiling — the ones with their own `activeXTypeId`) committed successfully on. `Space`, at
+rest (idle tool phase, no numeric buffer), calls `repeatLastOperation`, which just switches back to
+that tool. Nothing else needs to happen: every "parameter" the task's own wording worried about
+(active type, `wallMode`, `offsetDistance`, ...) already lives in its own persistent store field
+that tool-switching does not reset — so "same tool + type + parameters" falls out of the existing
+architecture for free, and the whole feature is "remember one tool id, then call `setTool`."
+
+**Decision, A10 (multi-select property editing):** `PropertiesPanel` gains `MultiProps`, rendered
+when 2+ elements are selected. When they are all the SAME kind, it shows that kind's common
+INSTANCE fields (declared per-kind, reusing the existing `NumberField`/`CheckField` components) with
+the FIRST selected element's value as the starting point; editing one commits a patch to every
+selected id in a single `commit()` call, so it is one undo step, not N. A field that lives on the
+TYPE (wall/slab/ceiling thickness) is applied to every DISTINCT type the selection happens to span,
+not just the first element's type — "one thickness field driving several walls" (the task's own
+example) reads naturally as "every selected wall's thickness becomes this," which for a selection
+spanning two types means editing two types, not one. A mixed-kind selection keeps the plain
+"multiple elements selected" hint, since there is no schema-level field shared across, say, a wall
+and a room worth guessing at.
+
+**Why bundled in one entry:** neither item is architecturally deep on its own — both are "read one
+more field off the store" — so a shared entry avoids two decision-log entries that would each be a
+paragraph restating the same one paragraph of reasoning.
+
+**Letter budget, noted here because D7/B5/B8/C4 all landed in the same pass:** every single-letter
+shortcut `A`–`Z` was already spoken for before this pass (`TOOL_KEYS` in `App.tsx`). `Q` and `Z`
+were the only two left, spent on `ceiling` and `spot` respectively; `D7`'s repeat could not get a
+letter and took `Space` (otherwise unused) instead; `B8`'s opening mode and C4's readout mode each
+became a ribbon toggle on an EXISTING tool (`slab`, `spot`) rather than a new tool, exactly as the
+wall tool's own line/arc toggle already established the pattern for.
+
+---
+
 ## E1 — 60 fps performance target: measured (Phase 1B-ii)
 
 **Finding:** `frontend/src/scene/stressScene.ts` generates a deterministic 3-storey scene (a 4×3

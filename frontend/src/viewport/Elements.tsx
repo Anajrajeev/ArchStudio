@@ -12,6 +12,7 @@ import * as THREE from 'three'
 import {
   resolveWall,
   resolveSlab,
+  resolveCeiling,
   columnSolid,
   beamSolid,
   wallSolidBoxes,
@@ -331,10 +332,17 @@ function FillingMesh({ filling, opts }: { filling: Filling; opts: RenderOpts }) 
 // Slabs — extruded boundary polygons
 // ---------------------------------------------------------------------------
 
-function polygonToShape(polygon: Vec2[]): THREE.Shape {
+function polygonToShape(polygon: Vec2[], holes: Vec2[][] = []): THREE.Shape {
   // THREE.Shape winds CCW; flip a CW polygon so normals point up.
   const pts = polygonArea(polygon) < 0 ? [...polygon].reverse() : polygon
-  return new THREE.Shape(pts.map(([x, y]) => new THREE.Vector2(x, y)))
+  const shape = new THREE.Shape(pts.map(([x, y]) => new THREE.Vector2(x, y)))
+  // Holes (B8) must wind OPPOSITE the outer boundary — the outer is now CCW, so every hole is
+  // flipped to CW, regardless of how the user happened to draw it.
+  for (const hole of holes) {
+    const hpts = polygonArea(hole) > 0 ? [...hole].reverse() : hole
+    shape.holes.push(new THREE.Path(hpts.map(([x, y]) => new THREE.Vector2(x, y))))
+  }
+  return shape
 }
 
 export function Slabs({ opts, levelId }: { opts: RenderOpts; levelId: string }) {
@@ -357,7 +365,10 @@ function SlabMesh({ slabId, opts }: { slabId: string; opts: RenderOpts }) {
     if (!slab) return null
     const resolved = resolveSlab(scene, slab)
     if (!resolved) return null
-    const shape = polygonToShape(resolved.boundary)
+    // Openings/shafts (B8): THREE.Shape holes cut cleanly through the whole extrusion — the top
+    // AND bottom caps skip the hole and its walls are built automatically, so a shaft reads as a
+    // real through-cut rather than a decal on the surface.
+    const shape = polygonToShape(resolved.boundary, resolved.openings)
     const geom = new THREE.ExtrudeGeometry(shape, {
       depth: resolved.thickness,
       bevelEnabled: false,
@@ -389,6 +400,74 @@ function SlabMesh({ slabId, opts }: { slabId: string; opts: RenderOpts }) {
           : (e) => {
               e.stopPropagation()
               onHover(slabId)
+            }
+      }
+      onPointerOut={ghost ? undefined : () => onHover(null)}
+      raycast={ghost ? () => null : undefined}
+    >
+      <meshStandardMaterial {...surfaceProps(color, selected, hovered, ghost, theme)} />
+      <OutlineIf show={selected && !ghost} color={theme.select} />
+    </mesh>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Ceilings — extruded boundary polygons anchored at the BOTTOM face (B5)
+// ---------------------------------------------------------------------------
+
+export function Ceilings({ opts, levelId }: { opts: RenderOpts; levelId: string }) {
+  const { scene } = opts
+  const ceilings = useMemo(
+    () => scene.ceilings.filter((c) => c.levelId === levelId),
+    [scene.ceilings, levelId],
+  )
+  return (
+    <>
+      {ceilings.map((c) => (
+        <CeilingMesh key={c.id} ceilingId={c.id} opts={opts} />
+      ))}
+    </>
+  )
+}
+
+function CeilingMesh({ ceilingId, opts }: { ceilingId: string; opts: RenderOpts }) {
+  const { scene, theme, selectedIds, hoveredId, ghost, onPick, onHover } = opts
+  const ceiling = scene.ceilings.find((c) => c.id === ceilingId)
+
+  const built = useMemo(() => {
+    if (!ceiling) return null
+    const resolved = resolveCeiling(scene, ceiling)
+    if (!resolved) return null
+    const shape = polygonToShape(resolved.boundary)
+    const geom = new THREE.ExtrudeGeometry(shape, { depth: resolved.thickness, bevelEnabled: false })
+    // Same extrusion as a slab (grows downward from the mesh's own Y position once rotated), but
+    // positioned at the STRUCTURAL top (bottomElevation + thickness) so it extrudes down to the
+    // finished bottom face — the mirror of how a slab extrudes down from its stored top.
+    geom.rotateX(Math.PI / 2)
+    geom.computeVertexNormals()
+    return { geom, resolved }
+  }, [scene, ceiling])
+
+  useDisposeGeometry(built?.geom)
+  if (!built || !ceiling) return null
+
+  const selected = selectedIds.includes(ceilingId)
+  const hovered = hoveredId === ceilingId
+  const color = materialColor(scene, built.resolved.material)
+
+  return (
+    <mesh
+      geometry={built.geom}
+      position={[0, built.resolved.bottomElevation + built.resolved.thickness, 0]}
+      receiveShadow
+      castShadow
+      onPointerDown={ghost ? undefined : (e) => onPick(ceilingId, e)}
+      onPointerOver={
+        ghost
+          ? undefined
+          : (e) => {
+              e.stopPropagation()
+              onHover(ceilingId)
             }
       }
       onPointerOut={ghost ? undefined : () => onHover(null)}

@@ -52,6 +52,7 @@ function ctx(overrides: Partial<PointerContext> = {}): PointerContext {
     numeric: { lockedLength: null, lockedAngle: null },
     snapToggles: { ...DEFAULT_SNAP_TOGGLES },
     gridSize: 0.25,
+    angleIncrement: 45,
     showGrid: true,
     previousSnap: null,
     ...overrides,

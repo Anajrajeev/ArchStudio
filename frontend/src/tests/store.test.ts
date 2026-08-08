@@ -515,3 +515,83 @@ describe('formatLength', () => {
     expect(formatLength(3 * 0.3048 + 6 * 0.0254, 'ft')).toBe(`3'6.0"`)
   })
 })
+
+// ---------------------------------------------------------------------------
+// Repeat last operation (D7)
+// ---------------------------------------------------------------------------
+
+describe('repeatLastOperation', () => {
+  beforeEach(() => {
+    const f = fixture()
+    useEditor.getState().loadScene(f.scene, f.levelId)
+    useEditor.getState().setTool('select')
+  })
+
+  it('does nothing when no typed placement has been committed yet', () => {
+    const before = useEditor.getState().tool
+    useEditor.getState().repeatLastOperation()
+    expect(useEditor.getState().tool).toBe(before)
+  })
+
+  it('switches back to the last tool a typed placement was noted on', () => {
+    useEditor.getState().notePlacement('stair')
+    useEditor.getState().setTool('select')
+    useEditor.getState().repeatLastOperation()
+    expect(useEditor.getState().tool).toBe('stair')
+  })
+
+  it('leaves the active type untouched — switching tools already restores it', () => {
+    const s = useEditor.getState()
+    s.setActiveType('stair', 'st-stair-280')
+    s.notePlacement('stair')
+    s.setTool('select')
+    s.repeatLastOperation()
+    expect(useEditor.getState().activeStairTypeId).toBe('st-stair-280')
+  })
+
+  it('resets points/toolPhase, ready to place another instance immediately', () => {
+    const s = useEditor.getState()
+    s.notePlacement('column')
+    s.setTool('wall')
+    s.addPoint([0, 0])
+    s.repeatLastOperation()
+    expect(useEditor.getState().tool).toBe('column')
+    expect(useEditor.getState().points).toHaveLength(0)
+    expect(useEditor.getState().toolPhase).toBe('idle')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Slab draw mode (B8) and spot readout mode (C4)
+// ---------------------------------------------------------------------------
+
+describe('setSlabMode / setSpotMode', () => {
+  beforeEach(() => {
+    const f = fixture()
+    useEditor.getState().loadScene(f.scene, f.levelId)
+  })
+
+  it('defaults to solid / elevation', () => {
+    expect(useEditor.getState().slabMode).toBe('solid')
+    expect(useEditor.getState().activeSpotMode).toBe('elevation')
+  })
+
+  it('setSlabMode toggles and discards any in-progress loop, like setWallMode', () => {
+    const s = useEditor.getState()
+    s.setTool('slab')
+    s.addPoint([0, 0])
+    s.setSlabMode('opening')
+    expect(useEditor.getState().slabMode).toBe('opening')
+    expect(useEditor.getState().points).toHaveLength(0)
+    expect(useEditor.getState().toolPhase).toBe('idle')
+  })
+
+  it('setSpotMode switches the readout without touching points', () => {
+    const s = useEditor.getState()
+    s.setTool('spot')
+    s.setSpotMode('slope')
+    expect(useEditor.getState().activeSpotMode).toBe('slope')
+    s.setSpotMode('coordinate')
+    expect(useEditor.getState().activeSpotMode).toBe('coordinate')
+  })
+})

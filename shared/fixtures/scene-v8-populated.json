@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 7,
+  "schemaVersion": 8,
   "projectId": "fixture-project",
   "units": "m",
   "types": [
@@ -207,6 +207,18 @@
       "postThickness": 0.04,
       "postSpacing": 1,
       "material": "mat-steel"
+    },
+    {
+      "id": "clt-1",
+      "category": "ceiling",
+      "name": "Plaster ceiling",
+      "layers": [
+        {
+          "material": "mat-plaster-white",
+          "thickness": 0.015,
+          "function": "finish"
+        }
+      ]
     }
   ],
   "levels": [
@@ -364,7 +376,27 @@
           4
         ]
       ],
-      "heightOffset": 0
+      "heightOffset": 0,
+      "openings": [
+        [
+          [
+            1,
+            1
+          ],
+          [
+            2,
+            1
+          ],
+          [
+            2,
+            2
+          ],
+          [
+            1,
+            2
+          ]
+        ]
+      ]
     }
   ],
   "columns": [
@@ -580,7 +612,9 @@
       ],
       "leaderTarget": null,
       "rotation": 0,
-      "textHeight": 0.2
+      "textHeight": 0.2,
+      "elevation": null,
+      "slope": null
     },
     {
       "id": "ann2",
@@ -596,7 +630,54 @@
         0
       ],
       "rotation": -15,
-      "textHeight": 0.2
+      "textHeight": 0.2,
+      "elevation": null,
+      "slope": null
+    },
+    {
+      "id": "ann3",
+      "viewId": "v1",
+      "kind": "spot-elevation",
+      "text": "",
+      "position": [
+        5,
+        3
+      ],
+      "leaderTarget": null,
+      "rotation": 0,
+      "textHeight": 0.2,
+      "elevation": 3.15,
+      "slope": null
+    },
+    {
+      "id": "ann4",
+      "viewId": "v1",
+      "kind": "spot-coordinate",
+      "text": "",
+      "position": [
+        2.4,
+        1.8
+      ],
+      "leaderTarget": null,
+      "rotation": 0,
+      "textHeight": 0.2,
+      "elevation": null,
+      "slope": null
+    },
+    {
+      "id": "ann5",
+      "viewId": "v2",
+      "kind": "spot-slope",
+      "text": "",
+      "position": [
+        3,
+        2
+      ],
+      "leaderTarget": null,
+      "rotation": 0,
+      "textHeight": 0.2,
+      "elevation": null,
+      "slope": 57.7
     }
   ],
   "roomTags": [
@@ -794,6 +875,63 @@
         ]
       ],
       "baseOffset": 0
+    }
+  ],
+  "ceilings": [
+    {
+      "id": "ceil1",
+      "typeId": "clt-1",
+      "levelId": "lv1",
+      "boundary": [
+        [
+          0,
+          0
+        ],
+        [
+          6,
+          0
+        ],
+        [
+          6,
+          4
+        ],
+        [
+          0,
+          4
+        ]
+      ],
+      "top": {
+        "kind": "level",
+        "levelId": "lv2",
+        "offset": 0
+      }
+    },
+    {
+      "id": "ceil2",
+      "typeId": "clt-1",
+      "levelId": "lv1",
+      "boundary": [
+        [
+          8,
+          0
+        ],
+        [
+          12,
+          0
+        ],
+        [
+          12,
+          4
+        ],
+        [
+          8,
+          4
+        ]
+      ],
+      "top": {
+        "kind": "unconnected",
+        "height": 3
+      }
     }
   ]
 }

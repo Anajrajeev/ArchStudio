@@ -13,7 +13,7 @@
 export type Vec2 = [number, number]
 export type Vec3 = [number, number, number]
 
-export const SCHEMA_VERSION = 7 as const
+export const SCHEMA_VERSION = 8 as const
 
 // ---------------------------------------------------------------------------
 // Materials
@@ -54,6 +54,7 @@ export type TypeCategory =
   | 'primitive'
   | 'stair'
   | 'railing'
+  | 'ceiling'
 
 export interface WallTypeDef {
   id: string
@@ -211,6 +212,18 @@ export interface RailingTypeDef {
   material: string
 }
 
+/**
+ * A ceiling (B5): a boundary polygon analogous to Slab, but anchored at its finished BOTTOM face
+ * rather than its top, and positioned with the same `TopConstraint` union walls/columns/stairs use
+ * (see `Ceiling.top` below) so it naturally attaches to the underside of the level above.
+ */
+export interface CeilingTypeDef {
+  id: string
+  category: 'ceiling'
+  name: string
+  layers: MaterialLayer[]
+}
+
 export type ElementTypeDef =
   | WallTypeDef
   | DoorTypeDef
@@ -223,6 +236,7 @@ export type ElementTypeDef =
   | PrimitiveTypeDef
   | StairTypeDef
   | RailingTypeDef
+  | CeilingTypeDef
 
 // ---------------------------------------------------------------------------
 // Levels
@@ -330,6 +344,12 @@ export interface Slab {
   boundary: Vec2[]
   /** Elevation of the slab's TOP relative to its level. */
   heightOffset: number
+  /**
+   * Openings/shafts (B8): inner-loop polygons in the same absolute scene-2D space as `boundary`,
+   * each a full-thickness through-cut (a stairwell, a vertical shaft) — never a partial recess,
+   * unlike a wall `Opening`. Empty for a slab with no cuts.
+   */
+  openings: Vec2[][]
 }
 
 export interface Column {
@@ -463,6 +483,26 @@ export interface Railing {
 }
 
 // ---------------------------------------------------------------------------
+// Ceilings (B5)
+// ---------------------------------------------------------------------------
+
+/**
+ * A ceiling: a boundary polygon like Slab, but anchored at its finished BOTTOM face. `top` reuses
+ * the wall/column/stair `TopConstraint` union to place that bottom face — pointing it at the level
+ * ABOVE (the default, matching how a wall's `top` reaches the underside of the storey above it)
+ * is what "attaches to the underside of a level" means here. The ceiling's assembly then extends
+ * UPWARD from that face by its type's thickness, the mirror image of how a Slab extends downward
+ * from its stored top.
+ */
+export interface Ceiling {
+  id: string
+  typeId: string
+  levelId: string
+  boundary: Vec2[]
+  top: TopConstraint
+}
+
+// ---------------------------------------------------------------------------
 // Rooms & furniture
 // ---------------------------------------------------------------------------
 
@@ -552,7 +592,19 @@ export interface Dimension {
 // Annotations (text, labels, leaders)
 // ---------------------------------------------------------------------------
 
-export type AnnotationKind = 'text' | 'label' | 'leader'
+/**
+ * `spot-elevation` / `spot-coordinate` / `spot-slope` (C4) are readouts computed from a picked
+ * point at PLACEMENT time — the same "sample what Dynamic UCS is showing right now" model the rest
+ * of the editor already uses (hover a face to re-plane, then click), rather than a continuously
+ * live reference to a host element. See DECISIONS.md for why that scope was chosen.
+ */
+export type AnnotationKind =
+  | 'text'
+  | 'label'
+  | 'leader'
+  | 'spot-elevation'
+  | 'spot-coordinate'
+  | 'spot-slope'
 
 export interface Annotation {
   id: string
@@ -567,6 +619,10 @@ export interface Annotation {
   rotation: number
   /** Text height in scene units (not screen pixels — scales with zoom). */
   textHeight: number
+  /** World elevation at `position`, sampled at placement — only set for `spot-elevation`. */
+  elevation: number | null
+  /** Roof grade (%) under `position`, sampled at placement — only set for `spot-slope`. */
+  slope: number | null
 }
 
 // ---------------------------------------------------------------------------
@@ -645,6 +701,7 @@ export interface SceneGraph {
   booleans: BooleanNode[]
   stairs: Stair[]
   railings: Railing[]
+  ceilings: Ceiling[]
 }
 
 /** Every collection key that holds scene elements (BIM model objects). */
@@ -663,6 +720,7 @@ export const ELEMENT_COLLECTIONS = [
   'booleans',
   'stairs',
   'railings',
+  'ceilings',
 ] as const
 
 export type ElementCollection = (typeof ELEMENT_COLLECTIONS)[number]
@@ -843,6 +901,12 @@ export const DEFAULT_TYPES: ElementTypeDef[] = [
     postSpacing: 1,
     material: 'mat-steel',
   },
+  {
+    id: 'clt-plaster-15',
+    category: 'ceiling',
+    name: 'Plaster ceiling — 15mm',
+    layers: [{ material: 'mat-plaster-white', thickness: 0.015, function: 'finish' }],
+  },
 ]
 
 export function emptySceneGraph(projectId: string): SceneGraph {
@@ -871,6 +935,7 @@ export function emptySceneGraph(projectId: string): SceneGraph {
     booleans: [],
     stairs: [],
     railings: [],
+    ceilings: [],
   }
 }
 
@@ -913,6 +978,11 @@ export function findStairType(scene: SceneGraph, typeId: string): StairTypeDef |
 export function findRailingType(scene: SceneGraph, typeId: string): RailingTypeDef | undefined {
   const t = findType(scene, typeId)
   return t?.category === 'railing' ? t : undefined
+}
+
+export function findCeilingType(scene: SceneGraph, typeId: string): CeilingTypeDef | undefined {
+  const t = findType(scene, typeId)
+  return t?.category === 'ceiling' ? t : undefined
 }
 
 export function findLevel(scene: SceneGraph, levelId: string): Level | undefined {

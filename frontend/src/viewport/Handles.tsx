@@ -91,12 +91,16 @@ export default function Handles() {
       numeric: { lockedLength: null, lockedAngle: null },
       snapToggles: s.snapToggles,
       gridSize: s.gridSize,
+      angleIncrement: s.angleIncrement,
       showGrid: s.showGrid,
       previousSnap: s.snap,
     }
     const rect = gl.domElement.getBoundingClientRect()
     const r = resolvePointer(camera, native.clientX, native.clientY, rect, ctx)
-    if (r) s.setSnap(r.snap, r.world)
+    if (r) {
+      s.setSnap(r.snap, r.world)
+      s.setSnapCandidates(r.snapCandidates)
+    }
     return r
   }
 

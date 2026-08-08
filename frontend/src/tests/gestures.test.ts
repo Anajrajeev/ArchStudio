@@ -82,6 +82,7 @@ function pointerContext(): PointerContext {
     numeric: s.numeric,
     snapToggles: s.snapToggles,
     gridSize: s.gridSize,
+    angleIncrement: s.angleIncrement,
     showGrid: s.showGrid,
     previousSnap: s.snap,
   }
@@ -203,6 +204,8 @@ function click(px: number, py: number): void {
       leaderTarget: null,
       rotation: 0,
       textHeight: 0.2,
+      elevation: null,
+      slope: null,
     }
     s.commit('Add text', (sc) => addAnnotation(sc, ann))
     s.select(ann.id)
@@ -231,6 +234,8 @@ function click(px: number, py: number): void {
       leaderTarget: target,
       rotation: 0,
       textHeight: 0.2,
+      elevation: null,
+      slope: null,
     }
     s.commit('Add leader', (sc) => addAnnotation(sc, ann))
     s.select(ann.id)

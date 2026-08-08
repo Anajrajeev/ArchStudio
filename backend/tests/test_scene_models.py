@@ -1,4 +1,4 @@
-"""Tests for the shared scene-graph Pydantic models (`shared/python/models.py`), schema v6.
+"""Tests for the shared scene-graph Pydantic models (`shared/python/models.py`), schema v8.
 
 Two jobs:
 
@@ -27,6 +27,8 @@ from shared.python.models import (
     BaselineLine,
     BeamTypeDef,
     BooleanNode,
+    Ceiling,
+    CeilingTypeDef,
     CircularProfile,
     ColumnTypeDef,
     DoorTypeDef,
@@ -44,6 +46,7 @@ from shared.python.models import (
     SceneDiff,
     SceneGraph,
     SchemaVersionError,
+    Slab,
     SlabTypeDef,
     Stair,
     StairTypeDef,
@@ -155,6 +158,7 @@ TYPE_DEFS: list[tuple[str, dict[str, Any], type]] = [
         {"height": 0.9, "postThickness": 0.04, "postSpacing": 1, "material": "mat-steel"},
         RailingTypeDef,
     ),
+    ("ceiling", {"layers": [LAYER]}, CeilingTypeDef),
 ]
 
 
@@ -170,7 +174,7 @@ class TestElementTypeDefDiscrimination:
 
     def test_covers_every_category_in_the_schema(self) -> None:
         # Guards against a new ElementTypeDef variant landing in scene.ts with no test here.
-        assert len(TYPE_DEFS) == 11
+        assert len(TYPE_DEFS) == 12
 
     def test_unknown_category_rejected(self) -> None:
         with pytest.raises(ValidationError):
@@ -462,6 +466,7 @@ class TestSceneGraph:
             "booleans",
             "stairs",
             "railings",
+            "ceilings",
         ):
             assert getattr(sg, name) == [], name
 
@@ -486,7 +491,7 @@ class TestSceneGraph:
     def test_parse_scene_accepts_current_version(self) -> None:
         assert parse_scene(scene()).project_id == "proj-1"
 
-    @pytest.mark.parametrize("version", [1, 2, 3, 4, 5])
+    @pytest.mark.parametrize("version", [1, 2, 3, 4, 5, 6, 7])
     def test_parse_scene_refuses_older_with_an_actionable_message(self, version: int) -> None:
         with pytest.raises(SchemaVersionError) as excinfo:
             parse_scene({"schemaVersion": version, "projectId": "p"})
@@ -675,11 +680,115 @@ class TestStairAndRailing:
         assert t.post_spacing == 1
 
 
+class TestCeiling:
+    """B5. A boundary polygon like Slab, but anchored at its bottom face via TopConstraint."""
+
+    def test_ceiling_parses_and_keeps_top_constraint_union(self) -> None:
+        c = Ceiling.model_validate(
+            {
+                "id": "ceil1",
+                "typeId": "clt-1",
+                "levelId": "lv1",
+                "boundary": [[0, 0], [4, 0], [4, 4], [0, 4]],
+                "top": {"kind": "level", "levelId": "lv2", "offset": 0},
+            }
+        )
+        assert isinstance(c.top, TopLevelConstraint)
+        assert len(c.boundary) == 4
+
+    def test_ceiling_boundary_needs_three_vertices(self) -> None:
+        with pytest.raises(ValidationError):
+            Ceiling.model_validate(
+                {
+                    "id": "ceil1",
+                    "typeId": "clt-1",
+                    "levelId": "lv1",
+                    "boundary": [[0, 0], [4, 0]],
+                    "top": {"kind": "unconnected", "height": 2.8},
+                }
+            )
+
+    def test_ceiling_type_needs_at_least_one_layer(self) -> None:
+        with pytest.raises(ValidationError):
+            CeilingTypeDef.model_validate(
+                {"id": "clt-1", "category": "ceiling", "name": "C", "layers": []}
+            )
+
+
+class TestSlabOpenings:
+    """B8. Openings default to empty and accept one or more inner-loop polygons."""
+
+    def test_defaults_to_no_openings(self) -> None:
+        s = Slab.model_validate(
+            {
+                "id": "sl1",
+                "typeId": "st-1",
+                "levelId": "lv1",
+                "boundary": [[0, 0], [4, 0], [4, 4], [0, 4]],
+                "heightOffset": 0,
+            }
+        )
+        assert s.openings == []
+
+    def test_accepts_a_stairwell_shaft(self) -> None:
+        s = Slab.model_validate(
+            {
+                "id": "sl1",
+                "typeId": "st-1",
+                "levelId": "lv1",
+                "boundary": [[0, 0], [4, 0], [4, 4], [0, 4]],
+                "heightOffset": 0,
+                "openings": [[[1, 1], [2, 1], [2, 2], [1, 2]]],
+            }
+        )
+        assert len(s.openings) == 1
+        assert s.openings[0][0] == (1.0, 1.0)
+
+
+class TestSpotAnnotations:
+    """C4. Computed at placement time, not continuously live — see DECISIONS.md."""
+
+    @pytest.mark.parametrize("kind", ["spot-elevation", "spot-coordinate", "spot-slope"])
+    def test_each_spot_kind_parses(self, kind: str) -> None:
+        a = Annotation.model_validate(
+            {
+                "id": "a1",
+                "viewId": "v1",
+                "kind": kind,
+                "text": "",
+                "position": [1, 2],
+                "leaderTarget": None,
+                "rotation": 0,
+                "textHeight": 0.2,
+                "elevation": 3.15 if kind == "spot-elevation" else None,
+                "slope": 12.5 if kind == "spot-slope" else None,
+            }
+        )
+        assert a.kind == kind
+
+    def test_elevation_and_slope_default_to_none(self) -> None:
+        a = Annotation.model_validate(
+            {
+                "id": "a1",
+                "viewId": "v1",
+                "kind": "text",
+                "text": "hi",
+                "position": [0, 0],
+                "leaderTarget": None,
+                "rotation": 0,
+                "textHeight": 0.2,
+            }
+        )
+        assert a.elevation is None
+        assert a.slope is None
+
+
 class TestSceneDiff:
     def test_defaults_to_all_none(self) -> None:
         diff = SceneDiff()
         assert diff.walls is None
         assert diff.primitives is None
+        assert diff.ceilings is None
 
     def test_partial_leaves_the_rest_none(self) -> None:
         diff = SceneDiff.model_validate({"walls": [wall_payload()]})
@@ -707,12 +816,12 @@ class TestFixtureParity:
     fails these tests — which is the whole point.
     """
 
-    @pytest.mark.parametrize("name", ["scene-v7-empty.json", "scene-v7-populated.json"])
+    @pytest.mark.parametrize("name", ["scene-v8-empty.json", "scene-v8-populated.json"])
     def test_fixture_parses(self, name: str) -> None:
         sg = parse_scene(load_fixture(name))
         assert sg.schema_version == SCHEMA_VERSION
 
-    @pytest.mark.parametrize("name", ["scene-v7-empty.json", "scene-v7-populated.json"])
+    @pytest.mark.parametrize("name", ["scene-v8-empty.json", "scene-v8-populated.json"])
     def test_fixture_round_trips(self, name: str) -> None:
         raw = load_fixture(name)
         sg = parse_scene(raw)
@@ -720,12 +829,12 @@ class TestFixtureParity:
         assert again == sg
 
     def test_fixture_version_matches_the_python_constant(self) -> None:
-        assert load_fixture("scene-v7-empty.json")["schemaVersion"] == SCHEMA_VERSION
+        assert load_fixture("scene-v8-empty.json")["schemaVersion"] == SCHEMA_VERSION
 
     def test_populated_fixture_exercises_every_collection(self) -> None:
         # If this fails, the fixture stopped being a full-coverage document and the parity
         # guarantee quietly narrowed.
-        sg = parse_scene(load_fixture("scene-v7-populated.json"))
+        sg = parse_scene(load_fixture("scene-v8-populated.json"))
         for name in (
             "types",
             "levels",
@@ -748,11 +857,12 @@ class TestFixtureParity:
             "booleans",
             "stairs",
             "railings",
+            "ceilings",
         ):
             assert getattr(sg, name), f"{name} is empty in the populated fixture"
 
     def test_populated_fixture_covers_every_type_category(self) -> None:
-        sg = parse_scene(load_fixture("scene-v7-populated.json"))
+        sg = parse_scene(load_fixture("scene-v8-populated.json"))
         assert {t.category for t in sg.types} == {
             "wall",
             "door",
@@ -765,18 +875,20 @@ class TestFixtureParity:
             "primitive",
             "stair",
             "railing",
+            "ceiling",
         }
 
     def test_typed_lookups_narrow_by_category(self) -> None:
         # Run against the fixture because it is the one document with every category present,
         # so each lookup is checked for both a hit AND a wrong-category miss.
-        sg = parse_scene(load_fixture("scene-v7-populated.json"))
+        sg = parse_scene(load_fixture("scene-v8-populated.json"))
         assert sg.find_wall_type("wt-1") is not None
         assert sg.find_slab_type("st-1") is not None
         assert sg.find_roof_type("rt-1") is not None
         assert sg.find_primitive_type("pt-box") is not None
         assert sg.find_stair_type("stt-1") is not None
         assert sg.find_railing_type("rlt-1") is not None
+        assert sg.find_ceiling_type("clt-1") is not None
         # Every lookup must refuse an id that exists but is the wrong category.
         assert sg.find_slab_type("wt-1") is None
         assert sg.find_roof_type("st-1") is None
@@ -784,8 +896,15 @@ class TestFixtureParity:
         assert sg.find_wall_type("pt-box") is None
         assert sg.find_stair_type("rlt-1") is None
         assert sg.find_railing_type("stt-1") is None
+        assert sg.find_ceiling_type("stt-1") is None
 
     def test_populated_fixture_covers_every_primitive_kind(self) -> None:
-        sg = parse_scene(load_fixture("scene-v7-populated.json"))
+        sg = parse_scene(load_fixture("scene-v8-populated.json"))
         kinds = {t.shape.kind for t in sg.types if isinstance(t, PrimitiveTypeDef)}
         assert kinds == set(PRIMITIVE_KINDS)
+
+    def test_populated_fixture_covers_slab_openings_and_spot_annotations(self) -> None:
+        sg = parse_scene(load_fixture("scene-v8-populated.json"))
+        assert any(len(s.openings) > 0 for s in sg.slabs)
+        kinds = {a.kind for a in sg.annotations}
+        assert {"spot-elevation", "spot-coordinate", "spot-slope"} <= kinds

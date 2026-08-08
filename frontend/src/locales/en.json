@@ -25,16 +25,30 @@
       "columngrid": "Column grid",
       "primitive": "Primitive solid",
       "stair": "Stair",
-      "railing": "Railing"
+      "railing": "Railing",
+      "ceiling": "Ceiling",
+      "spot": "Spot annotation"
     },
     "undo": "Undo",
     "redo": "Redo",
     "grid": "Show grid",
     "gridSize": "Grid spacing",
+    "angleIncrement": "Angle snap",
     "wallMode": {
       "label": "Wall shape",
       "line": "Straight wall",
       "arc": "Curved wall (3-point arc)"
+    },
+    "slabMode": {
+      "label": "Slab draw mode",
+      "solid": "New slab",
+      "opening": "Cut opening (shaft/stairwell)"
+    },
+    "spotMode": {
+      "label": "Spot readout",
+      "elevation": "Spot elevation",
+      "coordinate": "Spot coordinate",
+      "slope": "Spot slope (click inside a roof)"
     },
     "offsetDistance": "Offset distance"
   },
@@ -113,7 +127,8 @@
     "primitives": "Solids",
     "booleans": "Booleans",
     "stairs": "Stairs",
-    "railings": "Railings"
+    "railings": "Railings",
+    "ceilings": "Ceilings"
   },
   "status": {
     "noSnap": "No snap",
@@ -150,7 +165,8 @@
       "primitive": "Solid",
       "boolean": "Boolean",
       "stair": "Stair",
-      "railing": "Railing"
+      "railing": "Railing",
+      "ceiling": "Ceiling"
     },
     "type": "Type",
     "duplicateType": "Duplicate type for this element",
@@ -259,7 +275,16 @@
     "postSpacing": "Post spacing",
     "railingHeight": "Rail height",
     "railingError": "Railing issue",
-    "pathPoints": "Path points"
+    "pathPoints": "Path points",
+    "topConstraintCeiling": "Bottom face constraint",
+    "spotElevation": "Elevation",
+    "spotCoordinate": "Coordinate",
+    "spotSlope": "Slope",
+    "annotationSpotElevation": "Spot elevation",
+    "annotationSpotCoordinate": "Spot coordinate",
+    "annotationSpotSlope": "Spot slope",
+    "openings": "Openings",
+    "openingRemove": "Remove"
   },
   "chat": {
     "placeholder": "Describe what you want to design...",

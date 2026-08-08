@@ -149,6 +149,7 @@ export default function TopBar() {
                   className="tree-row"
                   style={{ width: '100%', height: 'var(--h-row)' }}
                   onClick={() => doExport(f)}
+                  aria-label={`Export as ${f === 'glb' ? 'glTF binary' : f === 'obj' ? 'Wavefront OBJ' : 'STL'}`}
                 >
                   {f.toUpperCase()}
                   <span className="spacer" />
@@ -226,6 +227,8 @@ function Segmented({
           <button
             key={o.value}
             onClick={() => onChange(o.value)}
+            aria-label={o.label}
+            aria-pressed={active}
             style={{
               display: 'flex',
               alignItems: 'center',

@@ -11,6 +11,7 @@ import {
   resolveTopElevation,
   findWallType,
   findSlabType,
+  findCeilingType,
   findLevel,
   findType,
   type Vec2,
@@ -18,6 +19,7 @@ import {
   type Wall,
   type Opening,
   type Slab,
+  type Ceiling,
   type Column,
   type Beam,
   type Baseline,
@@ -726,6 +728,8 @@ export function profileExtents(profile: ProfileShape): [number, number] {
 export interface ResolvedSlab {
   id: string
   boundary: Vec2[]
+  /** Openings/shafts (B8): inner-loop polygons, same scene-2D space as `boundary`. */
+  openings: Vec2[][]
   thickness: number
   /** World elevation of the slab's TOP face. */
   topElevation: number
@@ -744,9 +748,44 @@ export function resolveSlab(scene: SceneGraph, slab: Slab): ResolvedSlab | null 
   return {
     id: slab.id,
     boundary: slab.boundary,
+    openings: slab.openings,
     thickness,
     topElevation: level.elevation + slab.heightOffset,
     material: structural?.material ?? 'mat-concrete',
+  }
+}
+
+/**
+ * A ceiling (B5) as a boundary polygon plus a thickness and its finished BOTTOM elevation — the
+ * mirror of `resolveSlab`, which is anchored at the TOP. `ceiling.top` is resolved against the
+ * ceiling's own level (there is no per-instance base offset to add, unlike a wall) so pointing it
+ * at the level above places the finished face right at that level's floor, i.e. "the underside of
+ * a level" the same way a wall's `top` already reaches it.
+ */
+export interface ResolvedCeiling {
+  id: string
+  boundary: Vec2[]
+  thickness: number
+  /** World elevation of the ceiling's finished BOTTOM face. */
+  bottomElevation: number
+  material: string
+}
+
+export function resolveCeiling(scene: SceneGraph, ceiling: Ceiling): ResolvedCeiling | null {
+  const type = findCeilingType(scene, ceiling.typeId)
+  const level = findLevel(scene, ceiling.levelId)
+  if (!type || !level) return null
+  if (ceiling.boundary.length < 3) return null
+  const thickness = assemblyThickness(type.layers)
+  const structural =
+    type.layers.find((l) => l.function === 'structure') ??
+    type.layers.reduce((a, b) => (b.thickness > a.thickness ? b : a), type.layers[0])
+  return {
+    id: ceiling.id,
+    boundary: ceiling.boundary,
+    thickness,
+    bottomElevation: resolveTopElevation(scene, ceiling.top, level.elevation),
+    material: structural?.material ?? 'mat-plaster-white',
   }
 }
 
@@ -825,6 +864,27 @@ export function validateSlab(scene: SceneGraph, slab: Slab): string[] {
   if (!findSlabType(scene, slab.typeId)) errors.push(`Unknown slab type "${slab.typeId}"`)
   if (!findLevel(scene, slab.levelId)) errors.push(`Unknown level "${slab.levelId}"`)
   errors.push(...validateRoomPolygon(slab.boundary).map((e) => e.replace('Room polygon', 'Slab boundary')))
+  // Openings/shafts (B8): each must be a real polygon, and must sit inside the outer boundary —
+  // a hole with no material to cut is not a cut at all.
+  slab.openings.forEach((opening, i) => {
+    errors.push(
+      ...validateRoomPolygon(opening).map((e) => e.replace('Room polygon', `Opening ${i + 1}`)),
+    )
+    if (opening.length >= 3 && opening.some((p) => !pointInPolygon(p, slab.boundary))) {
+      errors.push(`Opening ${i + 1} extends outside the slab boundary`)
+    }
+  })
+  return errors
+}
+
+/** A boundary polygon like Slab/Room, but anchored at a finished BOTTOM face (B5). */
+export function validateCeiling(scene: SceneGraph, ceiling: Ceiling): string[] {
+  const errors: string[] = []
+  if (!findCeilingType(scene, ceiling.typeId)) errors.push(`Unknown ceiling type "${ceiling.typeId}"`)
+  if (!findLevel(scene, ceiling.levelId)) errors.push(`Unknown level "${ceiling.levelId}"`)
+  errors.push(
+    ...validateRoomPolygon(ceiling.boundary).map((e) => e.replace('Room polygon', 'Ceiling boundary')),
+  )
   return errors
 }
 

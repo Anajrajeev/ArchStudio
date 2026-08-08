@@ -8,6 +8,17 @@ export default defineConfig({
       '@shared': '../shared',
     },
   },
+  build: {
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          'three': ['three'],
+          'trois': ['@react-three/fiber', '@react-three/drei'],
+          'zustand': ['zustand'],
+        },
+      },
+    },
+  },
   test: {
     environment: 'jsdom',
     globals: true,

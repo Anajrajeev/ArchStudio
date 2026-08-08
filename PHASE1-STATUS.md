@@ -15,20 +15,25 @@
 
 | Gate | P1 items | P2 items | P3 items |
 |------|----------|----------|----------|
-| 1B-i core (A1/A2/A5, D1/D3/D4, E3/E4) | 8 / 8 done | 1 / 4 | — |
+| 1B-i core (A1/A2/A5, D1/D3/D4, E3/E4) | 8 / 8 done | 2 / 4 | — |
 | 1B-i documentation & annotation (C1–C3, A4) | 4 / 4 done | — | — |
-| 1B-ii (elements + perf + parity) | 8 / 8 done | 0 / 8 | — |
+| 1B-ii (elements + perf + parity) | 8 / 8 done | 3 / 8 | — |
 | Deferred to later phases | — | — | 12 |
+
+**1B-iii pass (this update):** landed 5 P2 items in one pass — A10, B5 (ceiling), B8 (slab
+openings/shafts), C4 (spot elevation/coordinate/slope), D7 (repeat-last-operation). D7's P2 count
+isn't tracked in the gate table above (D5/D6/D8 predate a "D interaction" summary row and were
+never folded into either bucket; not touched here) — see its row in section D below for the
+authoritative status.
 
 **Overall P1 count: 20 / 20 done — B1, B2, B3, D2/B7, E1 and E5 all landed this pass. The entire**
 **1B-i gate and all of 1B-ii's originally-scoped P1 items are now complete.** (B1's remainder —
 the *general*, non-rectangular / per-edge-angle roof solver — was always out of scope per D-018;
 what shipped is the wall-voiding case that WAS scoped, D-020.)
 
-**Quality gates as of the last update:** 837 frontend tests, **87 backend tests**, TypeScript
-strict clean, ESLint clean (`--max-warnings 0`), `vite build` succeeds (main chunk 1.32 MB /
-372 KB gzip, plus a **74 KB lazily-loaded CSG chunk** that only loads for scenes containing a
-boolean). Backend: ruff clean, `mypy --strict` clean, `shared/python/models.py` at 100% coverage.
+**Quality gates as of the last update:** 880 frontend tests, **100 backend tests**, TypeScript
+strict clean, ESLint clean (`--max-warnings 0`), `vite build` succeeds. Backend: ruff clean,
+`mypy --strict` clean, `shared/python/models.py` at 100% coverage.
 
 **B7's outstanding visual check is now closed.** The Browser pane displayed correctly this
 session (unlike the prior one), so a primitive was placed and selected via real `computer` clicks
@@ -65,7 +70,7 @@ rendering at the correct size in the live 3D/plan viewport.
 | A7 | One-shot snap overrides | P3 | ⏭️ | Running snaps are toggleable already; per-pick two-letter overrides are a power-user affordance, not a credibility gate. |
 | A8 | Furniture is a placeholder box | P3 | ⏭️ | The glTF catalog **is** Phase 5. `catalogId` is already plumbed through. |
 | A9 | Wall joins / cleanup | P2 | ⬜ | Visible at every corner in plan. |
-| A10 | Multi-select editing in properties | P2 | 🔨 | The Modify panel (D4/D3) is fully multi-select aware — move/copy/array/mirror/rotate/align all act on the whole selection. Shared *property* editing (one thickness field driving several walls) is still outstanding. |
+| A10 | Multi-select editing in properties | P2 | ✅ | `PropertiesPanel`'s new `MultiProps`: when 2+ SAME-kind elements are selected, shows that kind's common instance fields (wall/slab/ceiling/column/beam/room/furniture/primitive/stair/railing/roof/annotation/dimension), seeded from the first element, committing to every selected id in ONE undo step. A type-level field (wall/slab/ceiling thickness) applies per DISTINCT type across the selection, not just the first element's. A mixed-kind selection keeps the existing hint. **Visually confirmed**: selected 2 columns, edited Rotation once, both rotated; one Undo reverted both. |
 
 ## B. Element types
 
@@ -75,10 +80,10 @@ rendering at the correct size in the live 3D/plan viewport.
 | B2 | Stairs | P1 | ✅ | **D-021.** `StairTypeDef` (width, treadDepth) + `Stair` (reuses the wall/column `TopConstraint` union for its "top"; stores `desiredNumberOfRisers`). `shared/geometry/stair.ts`: `actualRiserHeight` is DERIVED from the resolved rise, never stored; one SOLID box per step (each reaching the base, like a real solid-core stair); Blondel comfort ratio (57–66cm) is *feedback* via `validateStair`, not a hard refusal. 2-click `stair` tool (`H`), Properties panel reusing `TopConstraintField`. `+21` geometry/mutation tests, `+3` gesture tests. |
 | B3 | Railing | P1 | ✅ | **D-021.** `RailingTypeDef` (height, post thickness/spacing) + `Railing` (an OPEN polyline path, ≥2 points — no "refuse the general case" needed since every segment is straight). `shared/geometry/railing.ts`: one rail box per path segment + posts every `postSpacing`, always forcing one at the exact path end. Needed a genuinely new tool CLASS: `isPathTool` collects unbounded points like a loop tool but never closes on the first click, finishing on Enter instead — wired through `Interaction.tsx`, `App.tsx`, and the gesture test harness identically. `+12` geometry tests, `+3` gesture tests. |
 | B4 | Curtain wall | P2 | ⬜ | Panels sized *by* the grid, never directly. |
-| B5 | Ceiling | P2 | ⬜ | |
+| B5 | Ceiling | P2 | ✅ | **D-022.** Schema v8 `CeilingTypeDef`/`Ceiling` (`boundary: Vec2[]`, `top: TopConstraint` — reuses the wall/column/stair union, not a bespoke field). Geometry (`resolveCeiling`/`validateCeiling`) and rendering follow Slab's OWN pattern (polygon + `ExtrudeGeometry`), not Box3D — a ceiling is a boundary element like Slab/Room, and Box3D is for linear elements; logged as a deliberate deviation from the literal task wording. Anchored at its finished BOTTOM face, extruding UP by thickness — the mirror of how a Slab extrudes down from its top. `ceiling` tool (`Q`), loop-drawn exactly like slab/room. `+`14 geometry/mutation tests. **Visually confirmed**: drawn, selected, rendered as a plate in 3D, Properties panel shows type/thickness/bottom-face fields. |
 | B6 | Column grid (axes) | P1 | ✅ | Schema v4 adds `ColumnGrid`/`GridAxis` (per-axis spacing, so non-uniform bays and radial-ready data model) + `columnGrids[]`, with a tested v3→v4 migration. `shared/geometry/columnGrid.ts` resolves axis positions, grid lines (with extension + bubble points at both ends), and intersections (for future column snapping). `viewport/ColumnGrids.tsx` renders dashed lines + numbered/lettered bubbles. One-click `columngrid` tool (`Y`) drops a sane default (4 numbered × 3 lettered axes, 5m bays); axis count/spacing/labels are edited in Properties (add/remove/rename), the same numeric-first pattern as the rest of the app. `+19` geometry tests, `+2` gesture tests. **Visually confirmed in the browser** — see the note below. |
 | B7 | Primitive solids + booleans | P1 | ✅ | Schema v6 adds `PrimitiveTypeDef`/`Primitive` (box, cylinder, cone, sphere, prism, wedge, torus) and `BooleanNode` (`union`/`cut`/`intersect` over operand ids, which may be other nodes — a real tree), with a tested v5→v6 migration that back-fills the default primitive types so pre-v6 projects can use the tool. `shared/geometry/primitives.ts` tessellates each shape to a watertight indexed mesh in pure TS (no Three) plus closed-form volume/bounds; `shared/geometry/booleanTree.ts` resolves/validates the tree (cycles, dangling operands, arity) with no CSG. `frontend/src/geometry/evaluateBoolean.ts` is the single Three seam, lazy-loading `three-bvh-csg@0.0.17` and shared by the viewport AND the exporter. `primitive` tool (`V`), Union/Cut/Intersect + Explode in the Modify panel (verbs, not a tool — they act on an existing selection). `+68` primitive tests, `+38` boolean tests, `+9` gesture tests, `+8` migration tests. See D-019. |
-| B8 | Slab openings (inner loops) and shafts | P2 | ⬜ | `Opening.hostId` already generalises the void. |
+| B8 | Slab openings (inner loops) and shafts | P2 | ✅ | **D-023.** `Slab.openings: Vec2[][]` — inner-loop polygons, always a full-thickness through-cut (not `Opening.hostId`, which is a rectangular-in-a-local-frame model that doesn't fit a slab). Cut via `THREE.Shape` holes (`shape.holes.push(...)`) in the SAME extrusion Slab already uses — `ExtrudeGeometry` builds the cap skip and the hole's own walls for free, no CSG needed. `validateSlab` checks each opening's polygon validity and containment inside the outer boundary. Editor surface: the slab tool gains a `solid`/`opening` mode (`A` toggle, mirroring the wall tool's own line/arc toggle), committing an opening loop to whichever existing slab contains its centroid. `+`8 geometry tests. **Visually confirmed**: cut a rectangular shaft into a floor slab in plan view — the hole renders and no extra slab was created. |
 | B9 | Wall sweeps / reveals | P3 | ⏭️ | Decorative profiles; no architectural capability depends on them. |
 | B10 | Site / terrain (toposolid) | P3 | ⏭️ | Large subsystem (cut/fill volumes); nothing in Phase 1 needs it. |
 | B11 | Stacked walls, panels, trusses, fences | P3 | ⏭️ | Composite/repeat elements built on top of the primitives above. |
@@ -90,7 +95,7 @@ rendering at the correct size in the live 3D/plan viewport.
 | C1 | `views[]` in the schema | P1 | ✅ | Schema v3. Added `SavedView`, `Dimension`, `Annotation`, `RoomTag` types and `views[]`, `dimensions[]`, `annotations[]`, `roomTags[]` to `SceneGraph`. v2→v3 migration adds empty arrays. v1→v2→v3 chain tested. Unblocks C2, C3, A4. |
 | C2 | Dimensions (aligned/linear/angular/radial/diameter/arc) | P1 | ✅ | `shared/geometry/dimensions.ts` resolves a `Dimension` (element-point refs, never raw coordinates) into witness lines + dimension line + text — genuinely parametric: moving the referenced wall moves the dimension. `viewport/Dimensions.tsx` renders it (drei `Line` + DOM `Html` label, same no-Troika reasoning as Overlays). New `dimension` tool (ribbon + `I` shortcut): each pick must land on a named element point via the snap engine's `sourceId`, or it refuses — `refFromPoint` is the parametric link. `+21` geometry tests, `+3` gesture tests. **Visually confirmed** after the `distanceFactor` label-sizing fix noted below. |
 | C3 | Text, labels, leaders, room tags | P1 | ✅ | `shared/geometry/annotations.ts` resolves `Annotation` (text/label/leader) and `RoomTag` (number/name/computed area, defaulting to the polygon centroid) against the live scene — an orphaned reference (deleted room) drops the tag rather than drawing stale text. `viewport/Annotations.tsx` renders both. Three new tools: `roomtag` (click a room, toggles a tag on/off), `text` (one click, edit wording in Properties), `leader` (two clicks: target then text position). `+13` geometry tests, `+5` gesture tests. **Visually confirmed** after the `distanceFactor` label-sizing fix noted below. |
-| C4 | Spot elevation / coordinate / slope | P2 | ⬜ | |
+| C4 | Spot elevation / coordinate / slope | P2 | ✅ | **D-024.** Three new `AnnotationKind`s (`spot-elevation`/`spot-coordinate`/`spot-slope`) placed by one new `spot` tool (`Z`) with a ribbon mode toggle. Elevation samples the work plane's world Y at the click (so hovering a face to Dynamic-UCS-re-plane onto it, then clicking, is the whole interaction); coordinate is just the annotation's own position; slope point-in-polygon-tests the click against every roof footprint and reads that roof's uniform angle (D-018) as `tan(angle)*100`, refusing outside every roof. All three are sampled at placement, not a live host reference — logged as a deliberate scope choice. `resolveAnnotation` computes the display text from the stored numbers on every render. `+`4 format tests. **Visually confirmed**: placed a spot elevation, saw the "+0.000" label render in the viewport and the computed value in Properties; coordinate/slope modes verified via unit tests + the shared render/dispatch code path (the ribbon's mode toggle was off-screen at the test browser's narrow width). |
 | C5 | Section and elevation views | P2 | ⬜ | A `SectionPlane` object driving both the 3D clip and a derived 2D view. |
 | C6 | Derived 2D linework | P2 | ⬜ | Cut vs projection line weights. What makes a plan read as a drawing. |
 | C7 | View range / plan regions | P2 | ⬜ | |
@@ -107,7 +112,7 @@ rendering at the correct size in the live 3D/plan viewport.
 | D4 | Copy / array (linear + radial) / mirror / rotate | P1 | ✅ | `shared/geometry/transform.ts` (one affine type) + `editor/transforms.ts` (verbs) + `ui/ModifyPanel.tsx` (numeric-first UI that works on a multi-selection). A mirrored arc's bulge **negates** (it encodes a signed sweep); a rotated column's own `rotation` scalar follows. Copying a wall brings its openings AND their fillings — the mirror of `deleteElement`'s cascade. A full 360° ring divides by the item count so the last copy does not land on the original. |
 | D5 | Groups | P2 | ⬜ | |
 | D6 | Constraints / locked dimensions | P2 | ⬜ | Large subsystem — to be scoped deliberately, not half-built. |
-| D7 | Repeat-last-operation | P2 | ⬜ | |
+| D7 | Repeat-last-operation | P2 | ✅ | **D-025.** The store tracks `lastPlacementTool` — the last TYPED-placement tool (one with its own `activeXTypeId`) a commit succeeded on. `Space`, at rest, calls `repeatLastOperation` which switches back to it; every type/parameter is already a persistent field tool-switching doesn't reset, so that alone restores "same tool + type + parameters." `+`4 store tests. **Unverified live**: the test browser's key-dispatch backend sends an empty `key`/`code` for the space bar specifically (confirmed via a temporary `keydown` listener — every other key used this session, including letters, Enter, and Escape, worked correctly), so the shortcut could not be exercised end-to-end in this session; the store action itself is unit-tested and the wiring in `App.tsx` follows the same pattern as every other working shortcut in that file. |
 | D8 | Angle/polar snap increments in the UI | P2 | ⬜ | `applyAngleSnap` exists and is tested; nothing exposes the increment. |
 | D9 | Zoom-adaptive snap increments | P3 | ⏭️ | Refinement of a working snap system. |
 | D10 | Level-of-detail per view scale | P3 | ⏭️ | Performance/aesthetic tuning; belongs with the Phase 7 perf pass. |
@@ -132,6 +137,32 @@ rendering at the correct size in the live 3D/plan viewport.
 
 Newest first. One line per landed item.
 
+- **A10 / B5 / B8 / C4 / D7** — five P2 items landed in one pass. Schema bumped to v8
+  (`ceilings[]`, `Slab.openings`, `Annotation.elevation`/`slope` — D-022/D-023/D-024), with the
+  Python mirror and golden fixtures updated in the same pass. Ceiling (B5) reuses Slab's own
+  polygon-extrusion pattern rather than Box3D, anchored at its bottom face via the same
+  `TopConstraint` union walls already use — a deliberate, logged deviation from the backlog item's
+  literal "reuse Box3D" wording (D-022). Slab openings (B8) cut via `THREE.Shape` holes, not CSG
+  (D-023) — the slab tool's new solid/opening mode toggles with `A`, mirroring the wall tool's own
+  line/arc toggle. Spot annotations (C4) sample the work plane's elevation or a roof's uniform
+  slope at the click, not a live host reference (D-024) — a new `spot` tool (`Z`) with a ribbon
+  mode toggle. D7 tracks `lastPlacementTool` and rebinds `Space` to switch back to it; A10 adds
+  `PropertiesPanel`'s `MultiProps` for same-kind bulk instance-field edits in one undo step
+  (D-025). `+`43 tests (880 total frontend, 100 total backend).
+  **Also fixed while here:** `ViewportHints`'s empty-state check never accounted for roofs,
+  primitives, stairs, railings, column grids, or (now) ceilings — found live while verifying B5,
+  since a scene with only a ceiling still showed the "empty project" overlay.
+  **Visually confirmed:** ceiling drawn/selected/rendered as a 3D plate with correct Properties;
+  a rectangular shaft cut cleanly through a floor slab with no extra slab created; a spot
+  elevation rendered its computed value in the viewport and Properties panel; multi-selecting two
+  columns and editing Rotation once rotated both and undid both in one step.
+  **Unverified live:** D7's `Space` shortcut — the test browser session's key-dispatch backend
+  sent an empty `key`/`code` for the space bar specifically (every other key this session,
+  including letters, Enter and Escape, worked correctly); the store action is unit-tested and the
+  `App.tsx` wiring matches every other working shortcut's pattern. Spot coordinate/slope modes were
+  verified via unit tests and the shared render/dispatch path rather than a ribbon click, since the
+  `SpotModeToggle` sat past the test browser's narrow (800px) width with no visible overflow
+  affordance.
 - **B1 / B2 / B3 / E1** — the last four Phase 1 P1 items, landed in one pass. Wall voiding
   (D-020): a `TopConstraint` `roof` variant + `wallRoofRamp`'s thickness-only wedge ramp for a
   wall on an eave line, a new `Box3D.topRamp` field, and the "Void to roof" Modify-panel verb.

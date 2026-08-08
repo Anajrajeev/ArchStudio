@@ -4,7 +4,7 @@
  */
 import type { Vec2 } from '../../../shared/types/scene'
 import { useEditor } from '../scene/store'
-import { buildCommit } from './tools'
+import { buildCommit, isTypedPlacementTool } from './tools'
 
 /**
  * Commit the active tool with `points`. Chains when the tool supports it (a wall continues from
@@ -21,6 +21,7 @@ export function commitActiveTool(points: Vec2[]): boolean {
   }
 
   s.commit(commit.label, commit.produce)
+  if (isTypedPlacementTool(s.tool)) s.notePlacement(s.tool)
   const newId = commit.selectAfter?.(useEditor.getState().scene) ?? null
 
   if (commit.keepPoints.length > 0) {

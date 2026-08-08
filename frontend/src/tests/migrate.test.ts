@@ -582,3 +582,134 @@ describe('the full v1 → v7 chain reaches stairs and railings', () => {
     expect(migrated.fillings).toHaveLength(2)
   })
 })
+
+// ---------------------------------------------------------------------------
+// v7 → v8 (ceilings B5, slab openings B8, spot annotations C4)
+// ---------------------------------------------------------------------------
+
+/** A representative v7 document: one slab (no `openings`), one annotation (no elevation/slope). */
+const V7 = {
+  schemaVersion: 7,
+  projectId: 'proj-v7',
+  units: 'm',
+  types: [
+    {
+      id: 'wt-custom',
+      category: 'wall' as const,
+      name: 'Custom wall',
+      function: 'interior' as const,
+      layers: [{ material: 'mat-concrete', thickness: 0.15, function: 'structure' as const }],
+    },
+  ],
+  levels: [{ id: 'lv1', name: 'Ground', elevation: 0, height: 3, isBuildingStory: true, computationHeight: 0 }],
+  walls: [],
+  openings: [],
+  fillings: [],
+  slabs: [
+    {
+      id: 'sl1',
+      typeId: 'st-floor-200',
+      levelId: 'lv1',
+      boundary: [
+        [0, 0],
+        [4, 0],
+        [4, 4],
+        [0, 4],
+      ],
+      heightOffset: 0,
+    },
+  ],
+  columns: [],
+  beams: [],
+  rooms: [],
+  furniture: [],
+  materials: [],
+  views: [],
+  dimensions: [],
+  annotations: [
+    {
+      id: 'ann1',
+      viewId: 'default',
+      kind: 'text' as const,
+      text: 'Existing note',
+      position: [1, 1],
+      leaderTarget: null,
+      rotation: 0,
+      textHeight: 0.2,
+    },
+  ],
+  roomTags: [],
+  columnGrids: [],
+  roofs: [],
+  primitives: [],
+  booleans: [],
+  stairs: [],
+  railings: [],
+}
+
+describe('migrateScene v7 → v8', () => {
+  const migrated = migrateScene(V7)
+
+  it('bumps to the current version and adds ceilings', () => {
+    expect(migrated.schemaVersion).toBe(SCHEMA_VERSION)
+    expect(migrated.ceilings).toEqual([])
+  })
+
+  it('back-fills empty openings on every existing slab', () => {
+    expect(migrated.slabs).toHaveLength(1)
+    expect(migrated.slabs[0].openings).toEqual([])
+    expect(migrated.slabs[0].boundary).toEqual(V7.slabs[0].boundary)
+  })
+
+  it('back-fills null elevation/slope on every existing annotation', () => {
+    expect(migrated.annotations).toHaveLength(1)
+    expect(migrated.annotations[0].elevation).toBeNull()
+    expect(migrated.annotations[0].slope).toBeNull()
+    expect(migrated.annotations[0].text).toBe('Existing note')
+  })
+
+  it('back-fills the default ceiling type so the tool is usable on an old project', () => {
+    expect(migrated.types.map((t) => t.category)).toContain('ceiling')
+  })
+
+  it("keeps the document's own types and preserves other v7 fields", () => {
+    expect(migrated.types.find((t) => t.id === 'wt-custom')?.name).toBe('Custom wall')
+    expect(migrated.projectId).toBe('proj-v7')
+  })
+
+  it('does not duplicate a ceiling type the document already had', () => {
+    const withCeiling = {
+      ...V7,
+      types: [
+        ...V7.types,
+        {
+          id: 'clt-plaster-15',
+          category: 'ceiling' as const,
+          name: 'My own ceiling',
+          layers: [{ material: 'mat-oak', thickness: 0.02, function: 'finish' as const }],
+        },
+      ],
+    }
+    const result = migrateScene(withCeiling)
+    const matches = result.types.filter((t) => t.id === 'clt-plaster-15')
+    expect(matches).toHaveLength(1)
+    expect(matches[0].name).toBe('My own ceiling')
+  })
+})
+
+describe('the full v1 → v8 chain reaches ceilings', () => {
+  const migrated = migrateScene(V1)
+
+  it('arrives at the current version with every new collection empty', () => {
+    expect(migrated.schemaVersion).toBe(SCHEMA_VERSION)
+    expect(migrated.stairs).toEqual([])
+    expect(migrated.railings).toEqual([])
+    expect(migrated.ceilings).toEqual([])
+  })
+
+  it('still preserves the original v1 geometry after seven migrations', () => {
+    expect(migrated.walls).toHaveLength(3)
+    expect(migrated.openings).toHaveLength(2)
+    expect(migrated.fillings).toHaveLength(2)
+  })
+})

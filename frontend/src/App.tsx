@@ -37,6 +37,8 @@ const TOOL_KEYS: Record<string, Tool> = {
   v: 'primitive',
   h: 'stair',
   j: 'railing',
+  q: 'ceiling',
+  z: 'spot',
 }
 
 export default function App() {
@@ -105,6 +107,14 @@ function useKeyboardLayer(): void {
       }
       if (mod) return // leave other browser shortcuts alone
 
+      // ---- Repeat last operation (D7): Space, at rest — an in-progress pick or a typed number
+      // owns the key otherwise, so this only fires between operations, never mid-gesture.
+      if (e.key === ' ' && s.toolPhase === 'idle' && !s.numeric.buffer) {
+        e.preventDefault()
+        s.repeatLastOperation()
+        return
+      }
+
       // ---- numeric entry (listening dimensions): digits go to the tool, not the browser
       if (s.toolPhase === 'collecting' || s.tool !== 'select') {
         if (/^[0-9]$/.test(e.key) || e.key === '.' || e.key === "'" || e.key === '"') {
@@ -118,9 +128,15 @@ function useKeyboardLayer(): void {
           return
         }
         if (e.key === 'Tab') {
-          // Tab switches which field the typed number fills, so a typed length can still be aimed.
+          // Tab can do two things depending on context:
+          // 1. If there's a numeric buffer, switch between length/angle fields (listening dimensions).
+          // 2. If there are snap candidates, cycle through them (A6).
           e.preventDefault()
-          s.toggleNumericField()
+          if (s.numeric.buffer) {
+            s.toggleNumericField()
+          } else if (s.snapCandidates && s.snapCandidates.length > 0) {
+            s.cycleSnapCandidate()
+          }
           return
         }
         if (e.key === 'Enter') {
@@ -202,6 +218,13 @@ function useKeyboardLayer(): void {
       if (e.key.toLowerCase() === 'a' && s.tool === 'wall') {
         e.preventDefault()
         s.setWallMode(s.wallMode === 'arc' ? 'line' : 'arc')
+        return
+      }
+
+      // ---- A toggles the slab tool between a new solid and cutting an opening (B8)
+      if (e.key.toLowerCase() === 'a' && s.tool === 'slab') {
+        e.preventDefault()
+        s.setSlabMode(s.slabMode === 'opening' ? 'solid' : 'opening')
         return
       }
 

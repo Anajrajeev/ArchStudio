@@ -16,7 +16,17 @@ import Interaction from './Interaction'
 import { useSyncWorkPlaneToLevel } from '../editor/useSyncWorkPlane'
 import Overlays from './Overlays'
 import Handles from './Handles'
-import { Walls, Fillings, Slabs, Rooms, Columns, Beams, Furniture, type RenderOpts } from './Elements'
+import {
+  Walls,
+  Fillings,
+  Slabs,
+  Ceilings,
+  Rooms,
+  Columns,
+  Beams,
+  Furniture,
+  type RenderOpts,
+} from './Elements'
 import { Roofs } from './Roofs'
 import { Primitives } from './Primitives'
 import { Stairs } from './Stairs'
@@ -310,6 +320,7 @@ function SceneContent({ theme }: { theme: CanvasTheme }) {
         return (
           <ClippedGroup key={level.id} planes={isActive ? clippingPlanes : undefined}>
             <Slabs opts={opts} levelId={level.id} />
+            <Ceilings opts={opts} levelId={level.id} />
             <Rooms opts={opts} levelId={level.id} />
             <Walls opts={opts} levelId={level.id} />
             <Fillings opts={opts} levelId={level.id} />

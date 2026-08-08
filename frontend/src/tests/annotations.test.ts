@@ -40,6 +40,8 @@ describe('resolveAnnotation', () => {
       leaderTarget: null,
       rotation: 0,
       textHeight: 0.2,
+      elevation: null,
+      slope: null,
     }
     const r = resolveAnnotation(ann)
     expect(r.leaderFrom).toBeNull()
@@ -57,6 +59,8 @@ describe('resolveAnnotation', () => {
       leaderTarget: [1, 1],
       rotation: 0,
       textHeight: 0.2,
+      elevation: null,
+      slope: null,
     }
     const r = resolveAnnotation(ann)
     expect(r.leaderFrom).toEqual([3, 3])
@@ -73,9 +77,77 @@ describe('resolveAnnotation', () => {
       leaderTarget: null,
       rotation: 0,
       textHeight: 0.2,
+      elevation: null,
+      slope: null,
     }
     const r = resolveAnnotation(ann)
     expect(r.leaderFrom).toBeNull()
+  })
+
+  // Spot elevation/coordinate/slope (C4): the display text is COMPUTED from the sampled numbers,
+  // not stored — so a formatting change updates every spot tag automatically.
+  it('formats a spot elevation from the sampled world Y', () => {
+    const ann: Annotation = {
+      id: 'a4',
+      viewId: 'v1',
+      kind: 'spot-elevation',
+      text: '',
+      position: [0, 0],
+      leaderTarget: null,
+      rotation: 0,
+      textHeight: 0.2,
+      elevation: 3.15,
+      slope: null,
+    }
+    expect(resolveAnnotation(ann).text).toBe('+3.150')
+  })
+
+  it('formats a negative spot elevation with its sign', () => {
+    const ann: Annotation = {
+      id: 'a5',
+      viewId: 'v1',
+      kind: 'spot-elevation',
+      text: '',
+      position: [0, 0],
+      leaderTarget: null,
+      rotation: 0,
+      textHeight: 0.2,
+      elevation: -0.5,
+      slope: null,
+    }
+    expect(resolveAnnotation(ann).text).toBe('-0.500')
+  })
+
+  it('formats a spot coordinate from its own position, independent of any sampled field', () => {
+    const ann: Annotation = {
+      id: 'a6',
+      viewId: 'v1',
+      kind: 'spot-coordinate',
+      text: '',
+      position: [2.5, -1.25],
+      leaderTarget: null,
+      rotation: 0,
+      textHeight: 0.2,
+      elevation: null,
+      slope: null,
+    }
+    expect(resolveAnnotation(ann).text).toBe('X 2.500, Y -1.250')
+  })
+
+  it('formats a spot slope as a percentage', () => {
+    const ann: Annotation = {
+      id: 'a7',
+      viewId: 'v1',
+      kind: 'spot-slope',
+      text: '',
+      position: [0, 0],
+      leaderTarget: null,
+      rotation: 0,
+      textHeight: 0.2,
+      elevation: null,
+      slope: 57.735,
+    }
+    expect(resolveAnnotation(ann).text).toBe('57.7%')
   })
 })
 
@@ -83,8 +155,8 @@ describe('resolveAllAnnotations', () => {
   it('resolves every annotation in the scene', () => {
     const { scene: sc } = scene()
     const anns: Annotation[] = [
-      { id: 'a1', viewId: 'v1', kind: 'text', text: 'A', position: [0, 0], leaderTarget: null, rotation: 0, textHeight: 0.2 },
-      { id: 'a2', viewId: 'v1', kind: 'label', text: 'B', position: [1, 1], leaderTarget: null, rotation: 0, textHeight: 0.2 },
+      { id: 'a1', viewId: 'v1', kind: 'text', text: 'A', position: [0, 0], leaderTarget: null, rotation: 0, textHeight: 0.2, elevation: null, slope: null },
+      { id: 'a2', viewId: 'v1', kind: 'label', text: 'B', position: [1, 1], leaderTarget: null, rotation: 0, textHeight: 0.2, elevation: null, slope: null },
     ]
     const withAnns = { ...sc, annotations: anns }
     expect(resolveAllAnnotations(withAnns)).toHaveLength(2)

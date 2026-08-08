@@ -33,6 +33,7 @@ import {
   isPathTool,
   isModifyTool,
   isPairTool,
+  isTypedPlacementTool,
   modifyHint,
   pointsNeeded,
   shouldCloseLoop,
@@ -74,6 +75,7 @@ export default function Interaction() {
       numeric: s.numeric,
       snapToggles: s.snapToggles,
       gridSize: s.gridSize,
+      angleIncrement: s.angleIncrement,
       showGrid: s.showGrid,
       previousSnap: s.snap,
     }
@@ -85,7 +87,9 @@ export default function Interaction() {
       const rect = gl.domElement.getBoundingClientRect()
       const r = resolvePointer(camera, e.clientX, e.clientY, rect, pointerContext())
       if (!r) return null
-      useEditor.getState().setSnap(r.snap, r.world)
+      const s = useEditor.getState()
+      s.setSnap(r.snap, r.world)
+      s.setSnapCandidates(r.snapCandidates)
       return r
     },
     [camera, gl.domElement, pointerContext],
@@ -189,6 +193,7 @@ export default function Interaction() {
           return
         }
         s.commit(outcome.result.label, outcome.result.produce)
+        if (isTypedPlacementTool(s.tool)) s.notePlacement(s.tool)
         const id = outcome.result.selectAfter?.(useEditor.getState().scene)
         if (id) s.select(id)
         return
@@ -279,6 +284,8 @@ export default function Interaction() {
           leaderTarget: null,
           rotation: 0,
           textHeight: 0.2,
+          elevation: null,
+          slope: null,
         }
         s.commit('Add text', (sc) => addAnnotation(sc, ann))
         s.select(ann.id)
@@ -301,10 +308,63 @@ export default function Interaction() {
           leaderTarget: target,
           rotation: 0,
           textHeight: 0.2,
+          elevation: null,
+          slope: null,
         }
         s.commit('Add leader', (sc) => addAnnotation(sc, ann))
         s.select(ann.id)
         s.clearPoints()
+        return
+      }
+
+      // Spot elevation / coordinate / slope (C4): one click, computed from what Dynamic UCS is
+      // showing right now — the same "sample the current pick" model the rest of the editor
+      // already uses — rather than a continuously live reference to a host element.
+      if (s.tool === 'spot') {
+        const mode = s.activeSpotMode
+        if (mode === 'slope') {
+          // A roof's v1 geometry shares one angle across its whole footprint (D-018), so "the
+          // slope at this point" is just that angle — no per-point sampling needed.
+          const roof = s.scene.roofs.find(
+            (rf) => rf.levelId === s.activeLevelId && pointInPolygon(r.point, rf.footprint),
+          )
+          if (!roof) {
+            s.flash('Click inside a roof footprint to read its slope', 'error')
+            return
+          }
+          const ann: Annotation = {
+            id: newId('ann'),
+            viewId: 'default',
+            kind: 'spot-slope',
+            text: '',
+            position: r.point,
+            leaderTarget: null,
+            rotation: 0,
+            textHeight: 0.2,
+            elevation: null,
+            slope: Math.tan((roof.edges[0].angle * Math.PI) / 180) * 100,
+          }
+          s.commit('Add spot slope', (sc) => addAnnotation(sc, ann))
+          s.select(ann.id)
+          return
+        }
+        const ann: Annotation = {
+          id: newId('ann'),
+          viewId: 'default',
+          kind: mode === 'elevation' ? 'spot-elevation' : 'spot-coordinate',
+          text: '',
+          position: r.point,
+          leaderTarget: null,
+          rotation: 0,
+          textHeight: 0.2,
+          elevation: mode === 'elevation' ? r.world[1] : null,
+          slope: null,
+        }
+        s.commit(
+          mode === 'elevation' ? 'Add spot elevation' : 'Add spot coordinate',
+          (sc) => addAnnotation(sc, ann),
+        )
+        s.select(ann.id)
         return
       }
 

@@ -7,6 +7,7 @@ import {
   toolHint,
   isLoopTool,
   isHostedTool,
+  isTypedPlacementTool,
   buildCommit,
   buildHostedCommit,
   nearestWall,
@@ -15,6 +16,7 @@ import {
 import { commitActiveTool } from '../editor/commit'
 import { useEditor, TOOL_POINTS, type Tool } from '../scene/store'
 import { resolveWall } from '../../../shared/geometry/index'
+import { addSlab } from '../scene/mutations'
 import type { Vec2 } from '../../../shared/types/scene'
 import { fixture, withWall } from './helpers'
 
@@ -54,6 +56,7 @@ describe('tool classification', () => {
   it('identifies loop tools', () => {
     expect(isLoopTool('slab')).toBe(true)
     expect(isLoopTool('room')).toBe(true)
+    expect(isLoopTool('ceiling')).toBe(true)
     expect(isLoopTool('wall')).toBe(false)
   })
 
@@ -61,6 +64,27 @@ describe('tool classification', () => {
     expect(isHostedTool('door')).toBe(true)
     expect(isHostedTool('window')).toBe(true)
     expect(isHostedTool('column')).toBe(false)
+  })
+
+  it('identifies typed placement tools (D7) — the ones with an active type selector', () => {
+    for (const tool of [
+      'wall',
+      'slab',
+      'door',
+      'window',
+      'column',
+      'beam',
+      'roof',
+      'primitive',
+      'stair',
+      'railing',
+      'ceiling',
+    ] as Tool[]) {
+      expect(isTypedPlacementTool(tool), tool).toBe(true)
+    }
+    for (const tool of ['select', 'room', 'roomtag', 'text', 'leader', 'columngrid', 'spot'] as Tool[]) {
+      expect(isTypedPlacementTool(tool), tool).toBe(false)
+    }
   })
 
   it('declares a point budget for every tool', () => {
@@ -182,6 +206,60 @@ describe('buildCommit', () => {
   it('refuses a slab with fewer than three points', () => {
     useEditor.getState().setTool('slab')
     expect(buildCommit(useEditor.getState(), [[0, 0], [4, 0]])).toBeNull()
+  })
+
+  it('builds a ceiling from three or more points and does not chain (B5)', () => {
+    useEditor.getState().setTool('ceiling')
+    const commit = buildCommit(useEditor.getState(), [
+      [0, 0],
+      [4, 0],
+      [4, 3],
+    ])
+    expect(commit).not.toBeNull()
+    expect(commit!.keepPoints).toEqual([])
+    expect(commit!.produce(useEditor.getState().scene).ceilings).toHaveLength(1)
+  })
+
+  it('refuses a ceiling with fewer than three points', () => {
+    useEditor.getState().setTool('ceiling')
+    expect(buildCommit(useEditor.getState(), [[0, 0], [4, 0]])).toBeNull()
+  })
+
+  it('cuts a slab opening in opening mode when the loop lands inside an existing slab (B8)', () => {
+    const s = useEditor.getState()
+    const withSlab = addSlab(s.scene, s.activeLevelId, 'st-floor-200', [
+      [0, 0],
+      [4, 0],
+      [4, 4],
+      [0, 4],
+    ])
+    s.loadScene(withSlab.scene, s.activeLevelId)
+    s.setTool('slab')
+    s.setSlabMode('opening')
+    const commit = buildCommit(useEditor.getState(), [
+      [1, 1],
+      [2, 1],
+      [2, 2],
+      [1, 2],
+    ])
+    expect(commit).not.toBeNull()
+    const next = commit!.produce(useEditor.getState().scene)
+    expect(next.slabs).toHaveLength(1) // no NEW slab — the opening was cut into the existing one
+    expect(next.slabs[0].openings).toHaveLength(1)
+    s.setSlabMode('solid') // slabMode is sticky across tools, like wallMode — reset for later tests
+  })
+
+  it('refuses a slab opening drawn outside every slab, rather than guessing a target', () => {
+    useEditor.getState().setTool('slab')
+    useEditor.getState().setSlabMode('opening')
+    expect(
+      buildCommit(useEditor.getState(), [
+        [10, 10],
+        [11, 10],
+        [11, 11],
+      ]),
+    ).toBeNull()
+    useEditor.getState().setSlabMode('solid')
   })
 
   it('builds a room', () => {

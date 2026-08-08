@@ -1,4 +1,4 @@
-"""Pydantic v2 models for the ArchStudio scene graph — schema v6.
+"""Pydantic v2 models for the ArchStudio scene graph — schema v8.
 
 These MUST stay in sync with `shared/types/scene.ts`, which is the canonical schema.
 The sections below appear in the same order and carry the same banner comments as that
@@ -23,7 +23,7 @@ from pydantic import BaseModel, Field
 Vec2 = tuple[float, float]
 Vec3 = tuple[float, float, float]
 
-SCHEMA_VERSION: Final = 7
+SCHEMA_VERSION: Final = 8
 
 # ---------------------------------------------------------------------------
 # Materials
@@ -66,6 +66,7 @@ TypeCategory = Literal[
     "primitive",
     "stair",
     "railing",
+    "ceiling",
 ]
 
 
@@ -275,6 +276,15 @@ class RailingTypeDef(BaseModel):
     model_config = {"populate_by_name": True}
 
 
+class CeilingTypeDef(BaseModel):
+    """A ceiling (B5): a boundary polygon like Slab, anchored at its finished BOTTOM face."""
+
+    id: str
+    category: Literal["ceiling"]
+    name: str
+    layers: list[MaterialLayer] = Field(min_length=1)
+
+
 ElementTypeDef = Annotated[
     WallTypeDef
     | DoorTypeDef
@@ -286,7 +296,8 @@ ElementTypeDef = Annotated[
     | RoofTypeDef
     | PrimitiveTypeDef
     | StairTypeDef
-    | RailingTypeDef,
+    | RailingTypeDef
+    | CeilingTypeDef,
     Field(discriminator="category"),
 ]
 
@@ -442,6 +453,9 @@ class Slab(BaseModel):
     boundary: list[Vec2] = Field(min_length=3)
     #: Elevation of the slab's TOP relative to its level.
     height_offset: float = Field(alias="heightOffset")
+    #: Openings/shafts (B8): inner-loop polygons in the same scene-2D space as `boundary`, each a
+    #: full-thickness through-cut. Empty for a slab with no cuts.
+    openings: list[list[Vec2]] = []
 
     model_config = {"populate_by_name": True}
 
@@ -601,6 +615,27 @@ class Railing(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Ceilings (B5)
+# ---------------------------------------------------------------------------
+
+
+class Ceiling(BaseModel):
+    """A boundary polygon like Slab, but anchored at its finished BOTTOM face.
+
+    `top` reuses the wall/column/stair TopConstraint union to place that bottom face; pointing it
+    at the level ABOVE (the usual default) is what "attaches to the underside of a level" means.
+    """
+
+    id: str
+    type_id: str = Field(alias="typeId")
+    level_id: str = Field(alias="levelId")
+    boundary: list[Vec2] = Field(min_length=3)
+    top: TopConstraint
+
+    model_config = {"populate_by_name": True}
+
+
+# ---------------------------------------------------------------------------
 # Rooms & furniture
 # ---------------------------------------------------------------------------
 
@@ -711,7 +746,14 @@ class Dimension(BaseModel):
 # Annotations (text, labels, leaders)
 # ---------------------------------------------------------------------------
 
-AnnotationKind = Literal["text", "label", "leader"]
+AnnotationKind = Literal[
+    "text",
+    "label",
+    "leader",
+    "spot-elevation",
+    "spot-coordinate",
+    "spot-slope",
+]
 
 
 class Annotation(BaseModel):
@@ -727,6 +769,10 @@ class Annotation(BaseModel):
     rotation: float
     #: Text height in scene units (not screen pixels — scales with zoom).
     text_height: float = Field(gt=0, alias="textHeight")
+    #: World elevation at `position`, sampled at placement — only set for "spot-elevation".
+    elevation: float | None = None
+    #: Roof grade (%) under `position`, sampled at placement — only set for "spot-slope".
+    slope: float | None = None
 
     model_config = {"populate_by_name": True}
 
@@ -798,7 +844,7 @@ class SceneGraph(BaseModel):
     would pass while the two schemas diverged — the exact failure this file exists to prevent.
     """
 
-    schema_version: Annotated[Literal[7], Field(alias="schemaVersion")] = SCHEMA_VERSION
+    schema_version: Annotated[Literal[8], Field(alias="schemaVersion")] = SCHEMA_VERSION
     project_id: str = Field(alias="projectId")
     units: Units = "m"
     types: list[ElementTypeDef] = []
@@ -822,6 +868,7 @@ class SceneGraph(BaseModel):
     booleans: list[BooleanNode] = []
     stairs: list[Stair] = []
     railings: list[Railing] = []
+    ceilings: list[Ceiling] = []
 
     model_config = {"populate_by_name": True, "extra": "forbid"}
 
@@ -853,6 +900,10 @@ class SceneGraph(BaseModel):
     def find_railing_type(self, type_id: str) -> RailingTypeDef | None:
         t = self.find_type(type_id)
         return t if isinstance(t, RailingTypeDef) else None
+
+    def find_ceiling_type(self, type_id: str) -> CeilingTypeDef | None:
+        t = self.find_type(type_id)
+        return t if isinstance(t, CeilingTypeDef) else None
 
     def find_level(self, level_id: str) -> Level | None:
         return next((lv for lv in self.levels if lv.id == level_id), None)
@@ -896,6 +947,7 @@ ELEMENT_COLLECTIONS: Final[tuple[str, ...]] = (
     "booleans",
     "stairs",
     "railings",
+    "ceilings",
 )
 
 #: Collections that hold view-scoped annotation objects.
@@ -930,6 +982,7 @@ class SceneDiff(BaseModel):
     booleans: list[BooleanNode] | None = None
     stairs: list[Stair] | None = None
     railings: list[Railing] | None = None
+    ceilings: list[Ceiling] | None = None
 
     model_config = {"populate_by_name": True}
 

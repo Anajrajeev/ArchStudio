@@ -15,6 +15,8 @@
 import type * as THREE from 'three'
 import {
   resolveSnap,
+  getSnapCandidates,
+  SNAP_LABEL,
   applyAxisLock,
   constrainToLength,
   fromPolar,
@@ -49,6 +51,7 @@ export interface PointerContext {
   numeric: { lockedLength: number | null; lockedAngle: number | null }
   snapToggles: SnapToggles
   gridSize: number
+  angleIncrement: number
   showGrid: boolean
   /** Previous frame's snap, for hysteresis. */
   previousSnap: SnapResult | null
@@ -62,6 +65,8 @@ export interface PointerResolution {
   world: Vec3
   /** World units per screen pixel at the cursor — the aperture basis. */
   worldPerPixel: number
+  /** In-range snap candidates for Tab-cycling (A6). */
+  snapCandidates: Array<{ point: Vec2; type: SnapResult['type']; label: string | null; sourceId?: string }> | null
 }
 
 /**
@@ -102,23 +107,36 @@ export function resolvePointer(
 
   // 3. Snapping — but a fully-constrained point must not be dragged off its constraint.
   const fullyConstrained = lockedLength !== null || ctx.axisLock !== 'none'
+  const snapContext = {
+    scene: ctx.scene,
+    levelId: ctx.activeLevelId,
+    aperture,
+    gridSize: ctx.showGrid ? ctx.gridSize : 0,
+    toggles: ctx.snapToggles,
+    fromPoint: from,
+    angleIncrements: [0, ctx.angleIncrement, ctx.angleIncrement * 2, ctx.angleIncrement * 3, 180, 180 + ctx.angleIncrement, 180 + ctx.angleIncrement * 2, 180 + ctx.angleIncrement * 3].map((a) => a % 360),
+    previous: ctx.previousSnap,
+    extraPoints: ctx.points,
+  }
+
   const snap: SnapResult = fullyConstrained
     ? { point: raw, type: null, label: null, snapped: false }
-    : resolveSnap(raw, {
-        scene: ctx.scene,
-        levelId: ctx.activeLevelId,
-        aperture,
-        gridSize: ctx.showGrid ? ctx.gridSize : 0,
-        toggles: ctx.snapToggles,
-        fromPoint: from,
-        previous: ctx.previousSnap,
-        extraPoints: ctx.points,
-      })
+    : resolveSnap(raw, snapContext)
+
+  const candidates = fullyConstrained
+    ? null
+    : getSnapCandidates(raw, snapContext).map((c) => ({
+        point: c.point,
+        type: c.type,
+        label: SNAP_LABEL[c.type] || null,
+        sourceId: c.sourceId,
+      }))
 
   return {
     point: snap.point,
     snap,
     world: [snap.point[0], planeElevation(ctx.workPlane), snap.point[1]],
     worldPerPixel: perPixel,
+    snapCandidates: candidates,
   }
 }

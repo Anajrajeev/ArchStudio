@@ -177,6 +177,12 @@ function populatedSceneGraph(): SceneGraph {
         postSpacing: 1,
         material: 'mat-steel',
       },
+      {
+        id: 'clt-1',
+        category: 'ceiling',
+        name: 'Plaster ceiling',
+        layers: [{ material: 'mat-plaster-white', thickness: 0.015, function: 'finish' }],
+      },
     ],
     levels: [
       {
@@ -271,6 +277,15 @@ function populatedSceneGraph(): SceneGraph {
           [0, 4],
         ],
         heightOffset: 0,
+        // A stairwell shaft cut through the slab (B8) — exercises the inner-loop opening field.
+        openings: [
+          [
+            [1, 1],
+            [2, 1],
+            [2, 2],
+            [1, 2],
+          ],
+        ],
       },
     ],
     columns: [
@@ -372,6 +387,8 @@ function populatedSceneGraph(): SceneGraph {
         leaderTarget: null,
         rotation: 0,
         textHeight: 0.2,
+        elevation: null,
+        slope: null,
       },
       {
         id: 'ann2',
@@ -382,6 +399,44 @@ function populatedSceneGraph(): SceneGraph {
         leaderTarget: [3, 0],
         rotation: -15,
         textHeight: 0.2,
+        elevation: null,
+        slope: null,
+      },
+      {
+        id: 'ann3',
+        viewId: 'v1',
+        kind: 'spot-elevation',
+        text: '',
+        position: [5, 3],
+        leaderTarget: null,
+        rotation: 0,
+        textHeight: 0.2,
+        elevation: 3.15,
+        slope: null,
+      },
+      {
+        id: 'ann4',
+        viewId: 'v1',
+        kind: 'spot-coordinate',
+        text: '',
+        position: [2.4, 1.8],
+        leaderTarget: null,
+        rotation: 0,
+        textHeight: 0.2,
+        elevation: null,
+        slope: null,
+      },
+      {
+        id: 'ann5',
+        viewId: 'v2',
+        kind: 'spot-slope',
+        text: '',
+        position: [3, 2],
+        leaderTarget: null,
+        rotation: 0,
+        textHeight: 0.2,
+        elevation: null,
+        slope: 57.7,
       },
     ],
     roomTags: [
@@ -492,19 +547,46 @@ function populatedSceneGraph(): SceneGraph {
         baseOffset: 0,
       },
     ],
+    // Both TopConstraint variants a ceiling actually uses in practice (level + unconnected).
+    ceilings: [
+      {
+        id: 'ceil1',
+        typeId: 'clt-1',
+        levelId: 'lv1',
+        boundary: [
+          [0, 0],
+          [6, 0],
+          [6, 4],
+          [0, 4],
+        ],
+        top: { kind: 'level', levelId: 'lv2', offset: 0 },
+      },
+      {
+        id: 'ceil2',
+        typeId: 'clt-1',
+        levelId: 'lv1',
+        boundary: [
+          [8, 0],
+          [12, 0],
+          [12, 4],
+          [8, 4],
+        ],
+        top: { kind: 'unconnected', height: 3 },
+      },
+    ],
   }
 }
 
 describe('golden scene-graph fixtures', () => {
-  it('the empty document still matches shared/fixtures/scene-v7-empty.json', async () => {
+  it('the empty document still matches shared/fixtures/scene-v8-empty.json', async () => {
     await expect(JSON.stringify(emptySceneGraph('fixture-project'), null, 2) + '\n').toMatchFileSnapshot(
-      '../../../shared/fixtures/scene-v7-empty.json',
+      '../../../shared/fixtures/scene-v8-empty.json',
     )
   })
 
-  it('the populated document still matches shared/fixtures/scene-v7-populated.json', async () => {
+  it('the populated document still matches shared/fixtures/scene-v8-populated.json', async () => {
     await expect(JSON.stringify(populatedSceneGraph(), null, 2) + '\n').toMatchFileSnapshot(
-      '../../../shared/fixtures/scene-v7-populated.json',
+      '../../../shared/fixtures/scene-v8-populated.json',
     )
   })
 
@@ -527,6 +609,6 @@ describe('golden scene-graph fixtures', () => {
 
   it('pins the schema version the fixtures were written for', () => {
     // A bump here is the signal to regenerate the fixtures AND update shared/python/models.py.
-    expect(SCHEMA_VERSION).toBe(7)
+    expect(SCHEMA_VERSION).toBe(8)
   })
 })

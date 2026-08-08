@@ -296,34 +296,39 @@ export function generateCandidates(cursor: Vec2, ctx: SnapContext): SnapCandidat
 const HYSTERESIS = 0.4
 
 /**
+ * Get all in-range snap candidates sorted by priority. Used for Tab-cycling (A6).
+ * Returns them sorted by distance + priority score.
+ */
+export function getSnapCandidates(cursor: Vec2, ctx: SnapContext): SnapCandidate[] {
+  const candidates = generateCandidates(cursor, ctx)
+  const scored = candidates
+    .map((c) => {
+      const d = distance(cursor, c.point)
+      if (d > ctx.aperture) return null
+      // Score blends distance with priority so a slightly-farther endpoint beats a nearer grid dot.
+      let score = d + PRIORITY[c.type] * ctx.aperture * 0.08
+      if (
+        ctx.previous?.type === c.type &&
+        ctx.previous.point &&
+        distance(ctx.previous.point, c.point) < 1e-9
+      ) {
+        score -= ctx.aperture * HYSTERESIS
+      }
+      return { candidate: c, score }
+    })
+    .filter((x) => x !== null)
+  scored.sort((a, b) => a!.score - b!.score)
+  return scored.map((s) => s!.candidate)
+}
+
+/**
  * Pick the winning snap for this cursor position, or return the raw point if nothing is in range.
  * Ties break by priority; the previous winner gets a hysteresis bonus so it doesn't flicker.
  */
 export function resolveSnap(cursor: Vec2, ctx: SnapContext): SnapResult {
-  const candidates = generateCandidates(cursor, ctx)
-
-  let best: SnapCandidate | null = null
-  let bestScore = Infinity
-
-  for (const c of candidates) {
-    const d = distance(cursor, c.point)
-    if (d > ctx.aperture) continue
-    // Score blends distance with priority so a slightly-farther endpoint beats a nearer grid dot.
-    let score = d + PRIORITY[c.type] * ctx.aperture * 0.08
-    if (
-      ctx.previous?.type === c.type &&
-      ctx.previous.point &&
-      distance(ctx.previous.point, c.point) < 1e-9
-    ) {
-      score -= ctx.aperture * HYSTERESIS
-    }
-    if (score < bestScore) {
-      bestScore = score
-      best = c
-    }
-  }
-
-  if (!best) return { point: cursor, type: null, label: null, snapped: false }
+  const inRange = getSnapCandidates(cursor, ctx)
+  if (inRange.length === 0) return { point: cursor, type: null, label: null, snapped: false }
+  const best = inRange[0]
   return {
     point: best.point,
     type: best.type,

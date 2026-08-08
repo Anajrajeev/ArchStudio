@@ -9,6 +9,7 @@ import * as THREE from 'three'
 import {
   resolveWall,
   resolveSlab,
+  resolveCeiling,
   wallSolidBoxes,
   boxToTriMesh,
   columnSolid,
@@ -78,9 +79,14 @@ function boxMesh(box: Box3D, material: THREE.Material, name: string): THREE.Mesh
   return mesh
 }
 
-function polygonToShape(polygon: Vec2[]): THREE.Shape {
+function polygonToShape(polygon: Vec2[], holes: Vec2[][] = []): THREE.Shape {
   const pts = polygonArea(polygon) < 0 ? [...polygon].reverse() : polygon
-  return new THREE.Shape(pts.map(([x, y]) => new THREE.Vector2(x, y)))
+  const shape = new THREE.Shape(pts.map(([x, y]) => new THREE.Vector2(x, y)))
+  for (const hole of holes) {
+    const hpts = polygonArea(hole) > 0 ? [...hole].reverse() : hole
+    shape.holes.push(new THREE.Path(hpts.map(([x, y]) => new THREE.Vector2(x, y))))
+  }
+  return shape
 }
 
 /** Triangulate `resolveRoof`'s planar faces — the same conversion `viewport/Roofs.tsx` performs. */
@@ -191,11 +197,11 @@ export function buildSceneGroup(scene: SceneGraph, csg?: CsgModule): THREE.Group
     g.add(holder)
   }
 
-  // ---- Slabs ----
+  // ---- Slabs (openings/shafts cut as THREE.Shape holes, B8) ----
   for (const slab of scene.slabs) {
     const resolved = resolveSlab(scene, slab)
     if (!resolved) continue
-    const geom = new THREE.ExtrudeGeometry(polygonToShape(resolved.boundary), {
+    const geom = new THREE.ExtrudeGeometry(polygonToShape(resolved.boundary, resolved.openings), {
       depth: resolved.thickness,
       bevelEnabled: false,
     })
@@ -205,6 +211,22 @@ export function buildSceneGroup(scene: SceneGraph, csg?: CsgModule): THREE.Group
     mesh.position.y = resolved.topElevation
     mesh.name = `slab:${slab.id}`
     groupFor(slab.levelId).add(mesh)
+  }
+
+  // ---- Ceilings (B5) — anchored at the bottom face, the mirror of a slab's top anchor ----
+  for (const ceiling of scene.ceilings) {
+    const resolved = resolveCeiling(scene, ceiling)
+    if (!resolved) continue
+    const geom = new THREE.ExtrudeGeometry(polygonToShape(resolved.boundary), {
+      depth: resolved.thickness,
+      bevelEnabled: false,
+    })
+    geom.rotateX(Math.PI / 2)
+    geom.computeVertexNormals()
+    const mesh = new THREE.Mesh(geom, mat(materialColor(scene, resolved.material)))
+    mesh.position.y = resolved.bottomElevation + resolved.thickness
+    mesh.name = `ceiling:${ceiling.id}`
+    groupFor(ceiling.levelId).add(mesh)
   }
 
   // ---- Room floors (thin plates, so exported models still read as rooms) ----

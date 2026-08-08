@@ -24,12 +24,44 @@ export interface ResolvedAnnotation {
   leaderTo: Vec2 | null
 }
 
+/**
+ * Spot elevation/coordinate/slope (C4) are computed from numbers sampled at PLACEMENT time
+ * (`Annotation.elevation`/`slope`, and `position` itself for coordinate) rather than a live
+ * reference to a host element — see DECISIONS.md for why that scope was chosen. Resolving the
+ * DISPLAY TEXT here rather than storing it means a unit or formatting change updates every spot
+ * tag automatically, the same reasoning `resolveDimension`'s auto-computed text uses.
+ */
+function formatElevation(metres: number): string {
+  return `${metres >= 0 ? '+' : ''}${metres.toFixed(3)}`
+}
+
+function formatCoordinate(p: Vec2): string {
+  return `X ${p[0].toFixed(3)}, Y ${p[1].toFixed(3)}`
+}
+
+function formatSlope(percent: number): string {
+  return `${percent.toFixed(1)}%`
+}
+
+function spotText(ann: Annotation): string {
+  switch (ann.kind) {
+    case 'spot-elevation':
+      return ann.elevation === null ? '—' : formatElevation(ann.elevation)
+    case 'spot-coordinate':
+      return formatCoordinate(ann.position)
+    case 'spot-slope':
+      return ann.slope === null ? '—' : formatSlope(ann.slope)
+    default:
+      return ann.text
+  }
+}
+
 export function resolveAnnotation(ann: Annotation): ResolvedAnnotation {
   return {
     id: ann.id,
     kind: ann.kind,
     position: ann.position,
-    text: ann.text,
+    text: spotText(ann),
     rotation: ann.rotation,
     textHeight: ann.textHeight,
     leaderFrom: ann.kind === 'leader' && ann.leaderTarget ? ann.position : null,
